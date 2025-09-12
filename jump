@@ -1,0 +1,235 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Wall Touch Scorer — Phaser 3 (Mobile Tap)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <style>
+    html, body { margin:0; padding:0; height:100%; background:#0f0f1a; }
+    body, #game { touch-action:none; -ms-touch-action:none; }
+    #game { width:100vw; height:100vh; display:block; position:relative; }
+    #jumpBtn{
+      position:fixed; left:50%; bottom:18px; transform:translateX(-50%);
+      font-family:system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      font-weight:700; font-size:18px; line-height:1; letter-spacing:.5px;
+      padding:16px 24px; border:none; border-radius:14px; cursor:pointer;
+      background:#34d399; color:#0b0b12; box-shadow:0 6px 24px rgba(0,0,0,.35);
+      user-select:none; -webkit-user-select:none;
+    }
+    #jumpBtn:active { transform:translateX(-50%) translateY(1px); }
+  </style>
+</head>
+<body>
+  <div id="game"></div>
+  <button id="jumpBtn" aria-label="Jump">JUMP</button>
+
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+  <script>
+  const W = 360, H = 640;
+
+  const CONFIG = {
+    gravityY: 1200,
+    slideSpeedMax: 110,
+    lighterGravityY: 400,
+    jumpPower: 460,
+    pushOff: 210,
+    dragonOutTime: 900,
+    spawnEvery: 900,
+    minDragonGapY: 80,
+    cameraLerp: 0.08
+  };
+
+  const game = new Phaser.Game({
+    type: Phaser.AUTO,
+    parent: 'game',
+    width: W,
+    height: H,
+    backgroundColor: '#0f0f1a',
+    physics: { default: 'arcade', arcade: { gravity: { y: CONFIG.gravityY }, debug: false } },
+    render: { pixelArt:true, roundPixels:true },
+    scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+    scene: { preload, create, update }
+  });
+
+  let player, cursors, keys, leftWall, rightWall, dragons, ui;
+  let playing = true, score = 0, best = 0, lastWall = null; // 'left' | 'right' | null
+
+  function preload() {
+    const g = this.make.graphics({x:0,y:0,add:false});
+    // Player
+    g.fillStyle(0xffffff,1).fillRect(0,0,8,8); g.generateTexture('player',8,8);
+    // Dragon head
+    g.clear(); g.fillStyle(0x9b2d2d,1).fillRect(0,0,12,10)
+      .fillStyle(0x000000,1).fillRect(2,2,2,2).fillRect(8,2,2,2)
+      .fillStyle(0xffe066,1).fillRect(0,6,12,2); g.generateTexture('dragon',12,10);
+    // Walls
+    g.clear(); g.fillStyle(0x2a2a44,1).fillRect(0,0,6,64); g.generateTexture('wall',6,64);
+    // Particle
+    g.clear(); g.fillStyle(0xb0f0ff,1).fillRect(0,0,2,2); g.generateTexture('px',2,2);
+  }
+
+  function create() {
+    const worldHeight = 100000;
+    this.physics.world.setBounds(0, -worldHeight, W, worldHeight + H);
+
+    // Build tall walls
+    leftWall  = this.add.group(); rightWall = this.add.group();
+    for (let y = 0; y < worldHeight + H; y += 64) {
+      const l = this.physics.add.staticImage(3, H - y, 'wall').setOrigin(0,1);
+      const r = this.physics.add.staticImage(W-3, H - y, 'wall').setOrigin(1,1);
+      leftWall.add(l); rightWall.add(r);
+    }
+
+    // Player
+    player = this.physics.add.sprite(18, H-80, 'player'); // start on the left wall
+    player.setMaxVelocity(450, 900).setBounce(0); player.body.setSize(8,8);
+
+    // Collisions
+    this.physics.add.collider(player, leftWall, () => onWallTouch('left'), null, this);
+    this.physics.add.collider(player, rightWall, () => onWallTouch('right'), null, this);
+
+    // Dragons
+    dragons = this.physics.add.group({ allowGravity:false, immovable:true });
+    this.physics.add.overlap(player, dragons, () => gameOver(this), null, this);
+
+    // Input
+    cursors = this.input.keyboard.createCursorKeys();
+    keys = this.input.keyboard.addKeys({ jump: Phaser.Input.Keyboard.KeyCodes.SPACE, A: 'A', D: 'D' });
+
+    // Tap anywhere to jump
+    this.input.on('pointerdown', (pointer) => {
+      if (pointer.event && pointer.event.preventDefault) pointer.event.preventDefault();
+      doJump(this);
+    });
+    // On-screen button
+    const btn = document.getElementById('jumpBtn');
+    const press = (e) => { if (e && e.cancelable) e.preventDefault(); doJump(this); };
+    btn.addEventListener('pointerdown', press, { passive:false });
+    btn.addEventListener('touchstart', press, { passive:false });
+    ['touchstart','pointerdown','mousedown'].forEach(evt=>{
+      document.addEventListener(evt, e => { if (e.cancelable) e.preventDefault(); }, { passive:false });
+    });
+
+    // Camera
+    this.cameras.main.startFollow(player, false, 0, CONFIG.cameraLerp, 0, H*0.25);
+    this.cameras.main.setDeadzone(W*0.8, H*0.2);
+
+    // UI
+    ui = {
+      score: this.add.text(10,10,'Score 0',{fontFamily:'monospace', fontSize:'16px', color:'#b0f0ff'}).setScrollFactor(0),
+      best:  this.add.text(W-10,10,'Best 0',{fontFamily:'monospace', fontSize:'16px', color:'#b0f0ff'}).setOrigin(1,0).setScrollFactor(0),
+      msg:   this.add.text(W/2, H/2, '', { fontFamily:'monospace', fontSize:'16px', color:'#ff7b7b'}).setOrigin(0.5).setScrollFactor(0)
+    };
+
+    // Spawn dragon heads
+    this.time.addEvent({ delay: CONFIG.spawnEvery, loop:true, callback: () => trySpawnDragon(this) });
+
+    // Jump puff
+    const particles = this.add.particles('px');
+    const emitter = particles.createEmitter({ speed:{min:-40,max:40}, quantity:6, lifespan:300, scale:{start:1,end:0}, on:false });
+    player.jumpEmitter = emitter;
+
+    // Start state
+    playing = true; score = 0; lastWall = null; updateScoreUI();
+  }
+
+  function onWallTouch(which) {
+    // Count only when you newly contact a different wall than last frame’s wall
+    if (!playing) return;
+    if (lastWall !== which) {
+      score++;
+      lastWall = which;
+      updateScoreUI();
+    }
+  }
+
+  function updateScoreUI(){
+    ui.score.setText(`Score ${score}`);
+    ui.best.setText(`Best ${best}`);
+  }
+
+  function trySpawnDragon(scene) {
+    if (!playing) return;
+    const cam = scene.cameras.main;
+    const yMin = cam.worldView.y - 40, yMax = cam.worldView.y + cam.height - 80;
+    const y = Phaser.Math.Between(yMin|0, yMax|0);
+    if (Math.abs(y - player.y) < CONFIG.minDragonGapY) return;
+
+    const leftSide = Math.random() < 0.5;
+    const xHidden = leftSide ? 8 : (W - 8);
+    const head = scene.physics.add.sprite(xHidden, y, 'dragon').setImmovable(true);
+    head.setOrigin(leftSide ? 0 : 1, 0.5); head.body.setAllowGravity(false);
+    dragons.add(head);
+
+    const outX = leftSide ? (xHidden + 22) : (xHidden - 22);
+    scene.tweens.add({
+      targets: head, x: outX, duration: 180, yoyo:false,
+      onComplete: () => {
+        scene.time.delayedCall(CONFIG.dragonOutTime, () => {
+          scene.tweens.add({ targets: head, x: xHidden, duration: 180, onComplete: () => head.destroy() });
+        });
+      }
+    });
+  }
+
+  function doJump(scene) {
+    if (!playing) { restart(scene); return; }
+    const body = player.body;
+    const onLeft  = body.blocked.left;
+    const onRight = body.blocked.right;
+    if (onLeft || onRight) {
+      player.setVelocityY(-CONFIG.jumpPower);
+      player.setVelocityX(onLeft ? CONFIG.pushOff : -CONFIG.pushOff);
+      player.jumpEmitter.explode(10, player.x, player.y + 6);
+      // After jumping, we’re airborne; next wall touch can score again
+      lastWall = null;
+    }
+  }
+
+  function update() {
+    if (!playing) return;
+
+    // Keyboard fallback
+    if (Phaser.Input.Keyboard.JustDown(keys.jump)) doJump(this);
+    if (keys.A.isDown || cursors.left.isDown)  player.setVelocityX(-120);
+    if (keys.D.isDown || cursors.right.isDown) player.setVelocityX( 120);
+
+    // Wall slide feel
+    const touchingLeft  = player.body.blocked.left;
+    const touchingRight = player.body.blocked.right;
+    if (touchingLeft || touchingRight) {
+      player.body.setGravityY(CONFIG.lighterGravityY);
+      if (player.body.velocity.y > CONFIG.slideSpeedMax) player.setVelocityY(CONFIG.slideSpeedMax);
+    } else {
+      player.body.setGravityY(CONFIG.gravityY);
+    }
+
+    // Fall too far below camera -> game over
+    if (player.y > this.cameras.main.worldView.y + H + 40) gameOver(this);
+  }
+
+  function gameOver(scene) {
+    if (!playing) return;
+    playing = false;
+    best = Math.max(best, score);
+    updateScoreUI();
+    player.setTint(0xff6b6b); player.setVelocity(0,0);
+    ui.msg.setText(`GAME OVER
+Score: ${score}
+Best:  ${best}
+
+Tap / Press SPACE / JUMP to restart`);
+    const restartOnce = () => { restart(scene); window.removeEventListener('pointerdown', restartOnce); };
+    window.addEventListener('pointerdown', restartOnce, { once:true, passive:false });
+  }
+
+  function restart(scene) {
+    score = 0; lastWall = null; playing = true;
+    ui.msg.setText(''); player.clearTint();
+    player.setPosition(18, scene.cameras.main.scrollY + H - 80); player.setVelocity(0,0);
+    updateScoreUI();
+    scene.cameras.main.flash(160);
+  }
+  </script>
+</body>
+</html>
