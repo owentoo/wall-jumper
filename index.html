@@ -2,430 +2,201 @@
 <html>
 <head>
   <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"/>
-  <title>Wall Jumper — Width ≤ 600, Height = Available</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover"/>
+  <title>Wall Jumper — Wall-Stick + 24×12 Obstacles</title>
   <style>
-    :root { color-scheme: dark; }
-    html, body {
-      margin: 0; padding: 0; height: 100%;
-      background: #0d0f14; color: #fff;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-      overflow: hidden;
-    }
-    .shell {
-      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-      padding-left: env(safe-area-inset-left);
-      padding-right: env(safe-area-inset-right);
-      padding-top: env(safe-area-inset-top);
-      padding-bottom: env(safe-area-inset-bottom);
-    }
-    .stage {
-      width: min(100vw, 600px); height: 100%;
-      display: flex; align-items: center; justify-content: center;
-    }
-    #game-root canvas {
-      display:block; width:100%; height:100%;
-      image-rendering: pixelated; image-rendering: crisp-edges;
-      touch-action: manipulation;
-    }
+    html,body{height:100%;margin:0;background:#101317;color:#fff;font-family:system-ui}
+    .wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
   </style>
-
-  <script>
-    (function(){
-      const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-      function getViewportHeightPx(){
-        const vv = window.visualViewport;
-        const cands = [ vv && vv.height, window.innerHeight, document.documentElement && document.documentElement.clientHeight ].filter(Boolean);
-        return Math.max(1, Math.round(Math.max.apply(null, cands)));
-      }
-      function sizeStage(){
-        const shell = document.querySelector('.shell');
-        const stage = document.querySelector('.stage');
-        if (!shell || !stage) return;
-        if (isMobile) {
-          const h = getViewportHeightPx();
-          for (const el of [shell, stage]) { el.style.height = h+'px'; el.style.minHeight = h+'px'; el.style.maxHeight = h+'px'; }
-        } else {
-          shell.style.height = '100vh'; shell.style.minHeight = '100vh'; shell.style.maxHeight = '100vh';
-          stage.style.height = '100%'; stage.style.minHeight = '100%'; stage.style.maxHeight = '100%';
-        }
-        window.dispatchEvent(new Event('resize'));
-      }
-      function init(){
-        sizeStage();
-        window.addEventListener('resize', sizeStage);
-        window.addEventListener('orientationchange', () => setTimeout(sizeStage, 100));
-        if (window.visualViewport){
-          window.visualViewport.addEventListener('resize', sizeStage);
-          window.visualViewport.addEventListener('scroll', sizeStage);
-        }
-        setTimeout(sizeStage, 50); setTimeout(sizeStage, 300); setTimeout(sizeStage, 900);
-      }
-      window.addEventListener('DOMContentLoaded', init);
-    })();
-  </script>
-
-  <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
 </head>
 <body>
-  <div class="shell">
-    <div class="stage">
-      <div id="game-root" style="width:100%;height:100%;"></div>
-    </div>
-  </div>
+<div class="wrap" id="wrap"></div>
 
+<!-- Phaser 3 -->
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.80.0/dist/phaser.min.js"></script>
 <script>
 (() => {
-  // ------- Tunables -------
-  const WORLD_H       = 100000;
-  const FALL_MIN      = 300, FALL_MAX = 520, FALL_ACCEL = 6.0;
+  const DESIGN_W = 360;
+  const DESIGN_H = 640;
+  const WALL_PAD = 40;     // inset of the walls from edges (design space)
+  const PLAYER_W = 24;     // example player width (match your sprite)
+  const PLAYER_H = 34;     // example player height (match your sprite)
+  const OB_W = 24;
+  const OB_H = 12;
 
-  // Faster jump
-  const PUSH_V        = 760;
-  const BOOST_V       = 1100;
-  const BOOST_MS      = 70;
-
-  // Shared pixel scale for both character and walls
-  const PIXEL_SCALE   = 2;
-
-  // Wall art (source)
-  const WALL_SRC_W    = 26;
-  const WALL_DISP_W   = WALL_SRC_W * PIXEL_SCALE;
-
-  class Main extends Phaser.Scene {
-    constructor(){ super('main'); }
-    get W(){ return this.scale.width; }
-    get H(){ return this.scale.height; }
-    get WALL_GAP(){ return Math.max(120, Math.min(this.W * 0.75, this.W - 60)); }
-    get WALL_X(){
-      const left  = (this.W - this.WALL_GAP)/2;
-      const right = (this.W + this.WALL_GAP)/2;
-      return { left, right };
-    }
-
-    preload(){
-      this.load.spritesheet('ninja', 'ninja_sheet.png', { frameWidth: 24, frameHeight: 34 });
-      this.load.image('wallTile', 'wall.png');
-      this.makeRect('obHead', 46, 40, 0xff4d4d);
-    }
-
-    create(){
-      // Animations: slide 1–12, jump 13–16, land 17
-      this.anims.create({ key:'slide', frames: this.anims.generateFrameNumbers('ninja', { start:0,  end:11 }), frameRate:18, repeat:-1 });
-      this.anims.create({ key:'jump',  frames: this.anims.generateFrameNumbers('ninja', { start:12, end:15 }), frameRate:18, repeat:0  });
-      this.anims.create({ key:'land',  frames: [{ key:'ninja', frame:16 }], frameRate:1, repeat:0 });
-
-      // Physics world
-      this.physics.world.setBounds(0, 0, this.W, WORLD_H);
-
-      // Visual walls (tile sprites)
-      this.leftWallVis  = this.add.tileSprite(this.WALL_X.left,  WORLD_H/2, WALL_DISP_W, WORLD_H, 'wallTile')
-        .setOrigin(0.5, 0.5).setDepth(0).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
-      this.rightWallVis = this.add.tileSprite(this.WALL_X.right, WORLD_H/2, WALL_DISP_W, WORLD_H, 'wallTile')
-        .setOrigin(0.5, 0.5).setDepth(0).setFlipX(true).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
-
-      // Physics rails (invisible) sized to visual width
-      this.add.graphics().generateTexture('rail1x1', 1, 1);
-      this.leftRail  = this.physics.add.staticImage(this.WALL_X.left,  WORLD_H/2, 'rail1x1').setAlpha(0);
-      this.rightRail = this.physics.add.staticImage(this.WALL_X.right, WORLD_H/2, 'rail1x1').setAlpha(0);
-      this.leftRail.setDisplaySize(WALL_DISP_W, WORLD_H).refreshBody();
-      this.rightRail.setDisplaySize(WALL_DISP_W, WORLD_H).refreshBody();
-
-      // Player
-      this.startY = Math.min(700, Math.max(420, this.H * 0.75));
-      this.player = this.physics.add.sprite(this.W/2, this.startY, 'ninja', 0).setDepth(2);
-      this.player.setScale(PIXEL_SCALE);
-      this.player.body.setSize(20, 30, true);
-      this.player.body.setOffset((24-20)/2, (34-30)/2);
-
-      // State
-      this.physics.world.gravity.y = 0;
-      this.fallSpeed = FALL_MIN;
-      this.side = 'left';
-      this.onWall = true;
-      this.alive = true;
-      this.playing = false;
-      this.deathFall = false;
-      this.score = 0; this.best = 0;
-
-      // Camera
-      this.cam = this.cameras.main;
-      this.cam.setBounds(0,0,this.W,WORLD_H);
-      this.cam.startFollow(this.player, true, 1, 1);
-      this.cam.setBackgroundColor('#0d0f14');
-      this.cam.setRoundPixels(true);
-
-      // HUD
-      this.scoreText = this.add.text(this.W/2, 50, '0', {fontSize:'48px', fontStyle:'800', color:'#fff'})
-        .setOrigin(0.5).setScrollFactor(0).setDepth(10);
-      this.subText   = this.add.text(this.W/2, this.H-34, 'Tap to start', {fontSize:'16px', color:'#9aa3b2'})
-        .setOrigin(0.5).setScrollFactor(0).setDepth(10);
-
-      // Obstacles
-      this.obstacles = this.physics.add.group();
-      this.physics.add.overlap(this.player, this.obstacles, () => { if(this.playing) this.gameOver(); }, null, this);
-
-      // Helpers
-      this.updateFacing = () => this.player.setFlipX(this.side === 'right'); // frames face RIGHT by default
-      this.playSlide  = () => this.player.anims.play('slide', true);
-      this.playJump   = () => this.player.anims.play('jump',  true);
-
-      // Rail contact handler (land) — no camera shake
-      const contact = (_player, rail) => {
-        if (!this.alive || !this.playing) return;
-        const which = (rail === this.leftRail) ? 'left' : 'right';
-        if (!this.onWall){
-          this.onWall = true;
-          this.side = which;
-          this.player.setVelocity(0, this.fallSpeed);
-          this.score += 1; this.scoreText.setText(this.score);
-          this.updateFacing();
-          this.player.anims.play('land', true);
-          this.time.delayedCall(80, () => { if (this.onWall && this.alive) this.playSlide(); });
-        } else {
-          this.player.setVelocityX(0);
-        }
-      };
-      this.colLeft  = this.physics.add.collider(this.player, this.leftRail,  contact, null, this);
-      this.colRight = this.physics.add.collider(this.player, this.rightRail, contact, null, this);
-
-      // Input
-      this.input.on('pointerdown', () => this.jump());
-
-      // Spawner
-      this.spacingBaseMin = 260;
-      this.spacingBaseMax = 340;
-      this.nextSpawnY = this.startY + 260;
-      this.lastSide = 'right';
-      this.lastY = this.startY;
-      this.spawnTimer = this.time.addEvent({ delay: 60, loop: true, paused: true, callback: () => this.spawnAhead() });
-
-      // Start overlay & correct initial placement
-      this.showStartOverlay();
-      this.snapToWall('left');
-
-      // Handle resizes
-      this.scale.on('resize', (gameSize) => this.onResize(gameSize));
-    }
-
-    // Drawing helper
-    makeRect(key,w,h,color){ const g=this.make.graphics({add:false}); g.fillStyle(color,1); g.fillRoundedRect(0,0,w,h,4); g.generateTexture(key,w,h); g.destroy(); }
-
-    // --- Exact wall placement (no gap) ---
-    innerEdgeX(which){
-      const rail = (which === 'left') ? this.leftRail : this.rightRail;
-      return rail.x + ((which === 'left') ? rail.body.halfWidth : -rail.body.halfWidth);
-    }
-    playerHalfWidth(){ return this.player?.body ? this.player.body.halfWidth : (this.player.displayWidth * 0.5); }
-
-    snapToWall(which, yOverride = null){
-      this.onWall = true;
-      this.side = which;
-
-      const edge  = this.innerEdgeX(which);
-      const pHalf = this.playerHalfWidth();
-      const pad   = 0; // ← no gap
-
-      let x = (which === 'left') ? (edge + pHalf + pad) : (edge - pHalf - pad);
-      x = Math.round(x); // pixel-perfect alignment
-
-      if (yOverride !== null) this.player.setY(yOverride);
-      this.player.setX(x);
-      this.player.setVelocity(0, this.fallSpeed);
-
-      this.updateFacing();
-      this.playSlide();
-    }
-
-    // Overlays
-    showStartOverlay(){
-      this.hideGameOverOverlay();
-      if (this.overlayStart) this.overlayStart.destroy();
-
-      this.playing = false; this.alive = true; this.deathFall = false;
-      this.fallSpeed = FALL_MIN;
-      this.obstacles.clear(true,true);
-      this.spawnTimer.paused = true;
-
-      this.cam.stopFollow(); this.cam.setBounds(0,0,this.W,WORLD_H);
-      this.cam.setScroll(0, Math.max(0, this.startY - this.H*0.5));
-      this.cam.startFollow(this.player, true, 1, 1);
-
-      this.subText.setText('Tap to start').setVisible(true);
-
-      this.overlayStart = this.add.container(0,0).setScrollFactor(0).setDepth(1000);
-      const dim = this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({ useHandCursor:true });
-      const title = this.add.text(this.W/2, this.H*0.32, 'WALL JUMPER', {fontSize:'40px', fontStyle:'800', color:'#ffffff'}).setOrigin(0.5);
-      const instr = this.add.text(this.W/2, this.H*0.42, 'Tap anywhere to start\nScore on each wall touch\nAvoid the hazards', {fontSize:'18px', color:'#b7c0cf', align:'center'}).setOrigin(0.5);
-      this.overlayStart.add([dim,title,instr]);
-
-      this.input.once('pointerdown', () => this.startGame(), this);
-    }
-    hideStartOverlay(){ if (this.overlayStart){ this.overlayStart.destroy(); this.overlayStart = null; } }
-    hideGameOverOverlay(){ if (this.overlayGameOver){ this.overlayGameOver.destroy(); this.overlayGameOver = null; } }
-
-    showGameOverOverlay(){
-      this.hideStartOverlay();
-      if (this.overlayGameOver) this.overlayGameOver.destroy();
-
-      this.playing = false; this.spawnTimer.paused = true;
-
-      this.overlayGameOver = this.add.container(0,0).setScrollFactor(0).setDepth(1000);
-      const dim = this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({ useHandCursor:true });
-      const title = this.add.text(this.W/2, this.H*0.32, 'GAME OVER', {fontSize:'40px', fontStyle:'800', color:'#ffffff'}).setOrigin(0.5);
-      const stats = this.add.text(this.W/2, this.H*0.42, `Score ${this.score} • Best ${this.best}`, {fontSize:'18px', color:'#b7c0cf'}).setOrigin(0.5);
-      const tip = this.add.text(this.W/2, this.H*0.47, 'Tap anywhere to restart', {fontSize:'16px', color:'#9aa3b2'}).setOrigin(0.5);
-      this.overlayGameOver.add([dim,title,stats,tip]);
-
-      this.input.once('pointerdown', () => this.restart(), this);
-    }
-
-    // Flow
-    startGame(){
-      this.hideStartOverlay();
-      if (this.colLeft)  this.colLeft.active = true;
-      if (this.colRight) this.colRight.active = true;
-
-      this.score = 0; this.scoreText.setText('0');
-      this.subText.setText('Tap to jump').setVisible(true);
-      this.fallSpeed = FALL_MIN;
-      this.obstacles.clear(true,true);
-      this.player.clearTint();
-
-      this.snapToWall('left', this.startY);
-
-      this.nextSpawnY = this.startY + 260;
-      this.lastSide = 'right';
-      this.lastY = this.startY;
-
-      this.alive = true;
-      this.deathFall = false;
-      this.playing = true;
-
-      this.cam.rotation = 0;
-      this.cam.setBounds(0,0,this.W,WORLD_H);
-      this.cam.startFollow(this.player, true, 1, 1);
-
-      this.spawnTimer.paused = false;
-    }
-
-    restart(){ this.hideGameOverOverlay(); this.startGame(); }
-
-    jump(){
-      if (!this.playing) return;
-      if (!this.alive){ this.restart(); return; }
-      if (!this.onWall) return;
-
-      const dir = (this.side==='left') ? 1 : -1;
-      this.player.setVelocity(dir*BOOST_V, this.fallSpeed);
-      this.onWall = false;
-      this.subText.setVisible(false);
-
-      // Play jump sequence (13–16)
-      this.playJump();
-      this.time.delayedCall(BOOST_MS, () => {
-        if (!this.onWall && this.alive){ this.player.setVelocity(dir*PUSH_V, this.fallSpeed); }
-      });
-    }
-
-    getCurrentSpacing(){
-      const t = Phaser.Math.Clamp((this.fallSpeed - FALL_MIN)/(FALL_MAX - FALL_MIN), 0, 1);
-      const min = Phaser.Math.Linear(this.spacingBaseMin, this.spacingBaseMin + 70, t);
-      const max = Phaser.Math.Linear(this.spacingBaseMax, this.spacingBaseMax + 110, t);
-      return { min, max };
-    }
-
-    spawnAhead(){
-      if (!this.playing || !this.alive) return;
-      const bufferAhead = 1000;
-      const camY = this.player.y;
-      const { min:curMin, max:curMax } = this.getCurrentSpacing();
-      while (this.nextSpawnY < camY + bufferAhead) {
-        let side = (Math.random() < 0.8) ? ((this.lastSide === 'left') ? 'right' : 'left') : this.lastSide;
-        const railX = (side==='left') ? this.WALL_X.left : this.WALL_X.right;
-
-        const inward = Phaser.Math.Between(20, 38);
-        const x = (side==='left') ? (railX + inward + WALL_DISP_W/2)
-                                  : (railX - inward - WALL_DISP_W/2);
-
-        const gap = Phaser.Math.Between(curMin|0, curMax|0);
-        const y = Math.max(this.nextSpawnY, this.lastY + gap);
-
-        const ob = this.obstacles.create(x, y, 'obHead').setImmovable(true).setDepth(1);
-        ob.body.setSize(40, 34).setOffset((46-40)/2, (40-34)/2);
-        ob.setData('side', side);
-
-        this.lastY = y;
-        this.lastSide = side;
-        this.nextSpawnY = y + gap;
-
-        if (Math.random() < 0.12) this.nextSpawnY += Phaser.Math.Between(40, 80);
+  const config = {
+    type: Phaser.AUTO,
+    parent: 'wrap',
+    backgroundColor: '#101317',
+    scale: {
+      width: DESIGN_W,
+      height: DESIGN_H,
+      mode: Phaser.Scale.FIT,
+      autoCenter: Phaser.Scale.CENTER_BOTH
+    },
+    render: {
+      pixelArt: true,      // keep pixel DPI crisp
+      antialias: false,
+      roundPixels: true
+    },
+    physics: {
+      default: 'arcade',
+      arcade: {
+        gravity: { y: 1100 },
+        debug: false
       }
-      const topCull = this.cameras.main.scrollY - 200;
-      this.obstacles.children.each(o => { if (o.active && o.y < topCull) o.destroy(); }, this);
-    }
+    },
+    scene: { preload, create, update }
+  };
 
-    update(_time, dt){
-      if (this.alive){
-        this.fallSpeed = Math.min(FALL_MAX, this.fallSpeed + FALL_ACCEL * (dt/1000));
-        if (this.player.body) this.player.setVelocityY(this.fallSpeed);
-      } else if (this.deathFall){
-        if (this.player.body) this.player.setVelocity(0, 900);
-        const bottomThreshold = this.cam.scrollY + this.H + 120;
-        if (!this.overlayGameOver && this.player.y > bottomThreshold){
-          this.deathFall = false;
-          this.showGameOverOverlay();
-        }
+  new Phaser.Game(config);
+
+  let player, cursors, leftWall, rightWall, obstacles, spawnTimer = 0, stickSide = null;
+
+  function preload() {
+    // Your 24×12 obstacle sprite; keep at 1x scale for perfect DPI
+    this.load.image('obstacle', 'obstacle.png');
+
+    // Optional fallback if obstacle.png is missing (we'll draw a 24×12)
+    this.load.once(Phaser.Loader.Events.COMPLETE, () => {
+      if (!this.textures.exists('obstacle')) {
+        const g = this.make.graphics({ x:0, y:0, add:false });
+        g.fillStyle(0xff4d4d, 1);
+        g.fillRect(0,0,OB_W,OB_H);
+        g.generateTexture('obstacle', OB_W, OB_H);
       }
-      if (this.playing && this.alive && this.player.y > WORLD_H - 200){ this.gameOver(); }
-    }
+    });
 
-    gameOver(){
-      if (!this.alive) return;
-      this.alive = false; this.playing = false;
-      this.best = Math.max(this.best, this.score);
-      this.player.setTint(0xff4d4d);
-      this.spawnTimer.paused = true;
-      if (this.colLeft)  this.colLeft.active = false;
-      if (this.colRight) this.colRight.active = false;
-      this.cam.stopFollow();
-      this.onWall = false;
-      this.deathFall = true;
-      this.player.setVelocity(0, 900);
-    }
+    // Placeholder player if you don’t already have one loaded in your build:
+    // Replace with your sprite/sheet and body size below.
+    const g = this.make.graphics({x:0,y:0,add:false});
+    g.fillStyle(0x7fd1ff,1);
+    g.fillRect(0,0,PLAYER_W,PLAYER_H);
+    g.generateTexture('playerBox', PLAYER_W, PLAYER_H);
+  }
 
-    onResize(gameSize){
-      this.physics.world.setBounds(0, 0, gameSize.width, WORLD_H);
-      this.cam.setBounds(0, 0, gameSize.width, WORLD_H);
+  function create() {
+    // Thin invisible wall colliders (immovable, no gravity)
+    leftWall  = this.physics.add.staticImage(WALL_PAD, DESIGN_H/2).setSize(2, DESIGN_H).setVisible(false);
+    rightWall = this.physics.add.staticImage(DESIGN_W - WALL_PAD, DESIGN_H/2).setSize(2, DESIGN_H).setVisible(false);
 
-      this.leftRail.setPosition(this.WALL_X.left,  WORLD_H/2).setDisplaySize(WALL_DISP_W, WORLD_H).refreshBody();
-      this.rightRail.setPosition(this.WALL_X.right, WORLD_H/2).setDisplaySize(WALL_DISP_W, WORLD_H).refreshBody();
+    // (Optional) visual wall tiles (if you have your 26×256 assets, add & tile them here)
 
-      this.leftWallVis.setPosition(this.WALL_X.left, WORLD_H/2).setSize(WALL_DISP_W, WORLD_H).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
-      this.rightWallVis.setPosition(this.WALL_X.right, WORLD_H/2).setSize(WALL_DISP_W, WORLD_H).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
+    // Player
+    player = this.physics.add.image(WALL_PAD + PLAYER_W*0.7, DESIGN_H*0.3, 'playerBox');
+    player.setCollideWorldBounds(true).setBounce(0).setDragX(0).setFriction(0,0);
+    // Tight pixel body to avoid fuzzy collisions
+    player.body.setSize(PLAYER_W, PLAYER_H).setOffset(0,0);
 
-      if (this.onWall) this.snapToWall(this.side);
+    // Obstacles group (immovable, gravity off, pixel-perfect 24×12 hitboxes)
+    obstacles = this.physics.add.group({
+      allowGravity: false,
+      immovable: true
+    });
 
-      this.scoreText.setPosition(this.W/2, 50);
-      this.subText.setPosition(this.W/2, this.H - 34);
+    // Colliders — zero bounce so everything “sticks”
+    this.physics.add.collider(player, leftWall,  () => stickToWall('left'));
+    this.physics.add.collider(player, rightWall, () => stickToWall('right'));
+    this.physics.add.collider(player, obstacles, () => hitObstacle());
+
+    // Input
+    cursors = this.input.keyboard.createCursorKeys();
+    this.input.on('pointerdown', jump);
+
+    // Camera pixel-perfect
+    this.cameras.main.setRoundPixels(true);
+  }
+
+  function spawnObstacle(scene) {
+    const side = Math.random() < 0.5 ? 'left' : 'right';
+    const x = (side === 'left') ? (WALL_PAD + OB_W*0.5) : (DESIGN_W - WALL_PAD - OB_W*0.5);
+    const y = Phaser.Math.Between(70, DESIGN_H - 140);
+
+    const ob = obstacles.create(x, y, 'obstacle');
+    ob.setScale(1).refreshBody();
+    ob.body.setSize(OB_W, OB_H).setOffset(-OB_W/2 + ob.displayOriginX, -OB_H/2 + ob.displayOriginY);
+    ob.setImmovable(true);
+    ob.body.allowGravity = false;
+    ob.setDepth(5);
+
+    // Tiny nudge into the wall so it visually “sticks” and avoids sub-pixel gaps
+    if (side === 'left')  ob.x = Math.round(x) + 0.01;
+    else                  ob.x = Math.round(x) - 0.01;
+  }
+
+  function hitObstacle() {
+    // If you need knockback, add it; for “stick” just stop X
+    player.setVelocityX(0);
+  }
+
+  function stickToWall(side) {
+    stickSide = side;
+    // Kill any small rebound off wall
+    player.setVelocityX(0);
+    // Slightly bias the player into the wall to eliminate the micro-gap
+    if (side === 'left')  player.x = Math.round(WALL_PAD + PLAYER_W*0.5) + 0.01;
+    else                  player.x = Math.round(config.scale.width - WALL_PAD - PLAYER_W*0.5) - 0.01;
+  }
+
+  function leaveWall() {
+    stickSide = null;
+  }
+
+  function jump() {
+    // Jump away from the wall with a clear push; stronger horizontal to ensure separation
+    const JUMP_VY = -480;
+    const PUSH_VX = 280;
+
+    if (stickSide === 'left') {
+      player.setVelocity(-PUSH_VX, JUMP_VY);
+      leaveWall();
+    } else if (stickSide === 'right') {
+      player.setVelocity(PUSH_VX, JUMP_VY);
+      leaveWall();
+    } else if (player.body.onFloor()) {
+      // allow ground jump if needed
+      player.setVelocityY(JUMP_VY);
     }
   }
 
-  const game = new Phaser.Game({
-    type: Phaser.AUTO,
-    parent: 'game-root',
-    backgroundColor: '#0d0f14',
-    physics: { default: 'arcade', arcade:{ gravity:{y:0}, debug:false } },
-    scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH },
-    render: {
-      pixelArt: true, antialias: false, roundPixels: true,
-      resolution: Math.max(1, Math.min(window.devicePixelRatio || 1, 2))
-    },
-    scene: [Main]
-  });
+  function update(time, delta) {
+    // Auto-apply a gentle slide when stuck to a wall
+    if (stickSide) {
+      // Vertical slide speed
+      const SLIDE_VY = 120;
+      if (player.body.velocity.y < SLIDE_VY) player.setVelocityY(SLIDE_VY);
+      // Clamp X exactly to wall so it “sticks” frame-to-frame
+      if (stickSide === 'left') {
+        player.x = Math.round(WALL_PAD + PLAYER_W*0.5) + 0.01;
+        player.setVelocityX(0);
+      } else {
+        player.x = Math.round(config.scale.width - WALL_PAD - PLAYER_W*0.5) - 0.01;
+        player.setVelocityX(0);
+      }
+    }
 
-  const stageEl = document.querySelector('.stage');
-  new ResizeObserver(() => { window.dispatchEvent(new Event('resize')); }).observe(stageEl);
+    // Simple keyboard jump (space/up) parity with touch
+    if (Phaser.Input.Keyboard.JustDown(cursors.space) || Phaser.Input.Keyboard.JustDown(cursors.up)) {
+      jump();
+    }
+
+    // Spawn obstacles on a cadence
+    spawnTimer += delta;
+    if (spawnTimer > 850) { // tweak as desired
+      spawnTimer = 0;
+      spawnObstacle(this);
+    }
+
+    // Keep obstacles locked to their wall (safety against float error)
+    obstacles.children.iterate(ob => {
+      if (!ob) return;
+      // Snap to nearest wall X
+      const leftX  = WALL_PAD + OB_W*0.5;
+      const rightX = config.scale.width - WALL_PAD - OB_W*0.5;
+      ob.x = (Math.abs(ob.x - leftX) < Math.abs(ob.x - rightX)) ? leftX + 0.01 : rightX - 0.01;
+      ob.body.updateFromGameObject();
+    });
+  }
 })();
 </script>
 </body>
