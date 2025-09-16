@@ -1,0 +1,431 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"/>
+  <title>Wall Jumper — Width ≤ 600, Height = Available</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #0d0f14;
+      color: #fff;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      overflow: hidden;
+    }
+    .shell {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding-left: env(safe-area-inset-left);
+      padding-right: env(safe-area-inset-right);
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+    .stage {
+      width: min(100vw, 600px);
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #game-root canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      touch-action: manipulation;
+    }
+  </style>
+
+  <script>
+    (function(){
+      const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      function getViewportHeightPx(){
+        const vv = window.visualViewport;
+        const cands = [
+          vv && vv.height,
+          window.innerHeight,
+          document.documentElement && document.documentElement.clientHeight
+        ].filter(Boolean);
+        return Math.max(1, Math.round(Math.max.apply(null, cands)));
+      }
+      function sizeStage(){
+        const shell = document.querySelector('.shell');
+        const stage = document.querySelector('.stage');
+        if (!shell || !stage) return;
+        if (isMobile) {
+          const h = getViewportHeightPx();
+          shell.style.height = h + 'px';
+          shell.style.minHeight = h + 'px';
+          shell.style.maxHeight = h + 'px';
+          stage.style.height = h + 'px';
+          stage.style.minHeight = h + 'px';
+          stage.style.maxHeight = h + 'px';
+        } else {
+          shell.style.height = '100vh';
+          shell.style.minHeight = '100vh';
+          shell.style.maxHeight = '100vh';
+          stage.style.height = '100%';
+          stage.style.minHeight = '100%';
+          stage.style.maxHeight = '100%';
+        }
+        window.dispatchEvent(new Event('resize'));
+      }
+      function init(){
+        sizeStage();
+        window.addEventListener('resize', sizeStage);
+        window.addEventListener('orientationchange', () => setTimeout(sizeStage, 100));
+        if (window.visualViewport){
+          window.visualViewport.addEventListener('resize', sizeStage);
+          window.visualViewport.addEventListener('scroll', sizeStage);
+        }
+        setTimeout(sizeStage, 50);
+        setTimeout(sizeStage, 300);
+        setTimeout(sizeStage, 900);
+      }
+      window.addEventListener('DOMContentLoaded', init);
+    })();
+  </script>
+
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <div class="stage">
+      <div id="game-root" style="width:100%;height:100%;"></div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const WORLD_H      = 100000;
+  const FALL_MIN     = 300, FALL_MAX = 520, FALL_ACCEL = 6.0;
+  const PUSH_V       = 640, BOOST_V = 820, BOOST_MS = 120;
+  const SHAKE_JUMP_D = 60,  SHAKE_LAND_D = 70,  SHAKE_JUMP_I = 0.0018, SHAKE_LAND_I = 0.0016;
+
+  class Main extends Phaser.Scene {
+    constructor(){ super('main'); }
+    get W(){ return this.scale.width; }
+    get H(){ return this.scale.height; }
+    get WALL_GAP(){ return Math.max(120, Math.min(this.W * 0.75, this.W - 60)); }
+    get WALL_X(){
+      const left  = (this.W - this.WALL_GAP)/2;
+      const right = (this.W + this.WALL_GAP)/2;
+      return { left, right };
+    }
+
+    preload(){
+      // Diagnostics on load
+      this.load.on('loaderror', (file) => console.error('[LOAD ERROR]', file?.key, file?.src));
+      this.load.on('filecomplete-spritesheet-ninja', (key, type, data) => console.log('[LOADED]', key, data?.src));
+
+      // Your sprite sheet: 24x34 per frame
+      this.load.spritesheet('ninja', 'ninja_sheet.png', {
+        frameWidth: 24,
+        frameHeight: 34
+      });
+
+      this.makeRect('rail', 10, 100, 0x1c2230);
+      this.makeRect('obHead', 46, 40, 0xff4d4d);
+    }
+
+    create(){
+      if (!this.textures.exists('ninja')) {
+        this.add.text(this.W/2, this.H/2, 'Sprite failed to load.\nCheck path/CORS.', {
+          fontSize: '18px', color: '#ff8080', align: 'center'
+        }).setOrigin(0.5).setScrollFactor(0);
+        return;
+      }
+
+      // Animations per your spec (1-indexed → 0-indexed)
+      this.anims.create({ key:'slide', frames: this.anims.generateFrameNumbers('ninja', { start:0,  end:11 }), frameRate:18, repeat:-1 });
+      this.anims.create({ key:'jump',  frames: this.anims.generateFrameNumbers('ninja', { start:12, end:15 }), frameRate:18, repeat:0  });
+      this.anims.create({ key:'land',  frames: [{ key:'ninja', frame:16 }], frameRate:1, repeat:0 });
+
+      // World / rails
+      this.physics.world.setBounds(0, 0, this.W, WORLD_H);
+      this.leftRail  = this.physics.add.staticImage(this.WALL_X.left,  WORLD_H/2, 'rail');
+      this.rightRail = this.physics.add.staticImage(this.WALL_X.right, WORLD_H/2, 'rail');
+      this.leftRail.setDisplaySize(10, WORLD_H).refreshBody();
+      this.rightRail.setDisplaySize(10, WORLD_H).refreshBody();
+
+      // Player sprite
+      this.startY = Math.min(700, Math.max(420, this.H * 0.75));
+      this.player = this.physics.add.sprite(this.WALL_X.left + 2, this.startY, 'ninja', 0).setDepth(2);
+      this.player.setScale(2);
+      this.player.body.setSize(20, 30, true);
+      this.player.body.setOffset((24 - 20)/2, (34 - 30)/2);
+
+      // State
+      this.physics.world.gravity.y = 0;
+      this.fallSpeed = FALL_MIN;
+      this.side = 'left';
+      this.onWall = true;
+      this.alive = true;
+      this.playing = false;
+      this.deathFall = false;
+      this.score = 0; this.best = 0;
+
+      // Camera
+      this.cam = this.cameras.main;
+      this.cam.setBounds(0,0,this.W,WORLD_H);
+      this.cam.startFollow(this.player, true, 1, 1);
+      this.cam.setBackgroundColor('#0d0f14');
+      this.cam.setRoundPixels(true);
+
+      // HUD
+      this.hud = this.add.container(0,0).setScrollFactor(0).setDepth(10);
+      this.scoreText = this.add.text(this.W/2, 50, '0', {fontSize:'48px', fontStyle:'800', color:'#fff'}).setOrigin(0.5);
+      this.subText   = this.add.text(this.W/2, this.H-34, 'Tap to start', {fontSize:'16px', color:'#9aa3b2'}).setOrigin(0.5);
+      this.hud.add([this.scoreText, this.subText]);
+
+      // Obstacles
+      this.obstacles = this.physics.add.group();
+      this.physics.add.overlap(this.player, this.obstacles, () => { if(this.playing) this.gameOver(); }, null, this);
+
+      // Helpers
+      this.updateFacing = () => this.player.setFlipX(this.side === 'right'); // assumes frames face RIGHT
+      this.playSlide  = () => this.player.anims.play('slide', true);
+      this.playJump   = () => this.player.anims.play('jump', true);
+
+      // Rail contact handler (land)
+      const contact = (_player, rail) => {
+        if (!this.alive || !this.playing) return;
+        const which = (rail === this.leftRail) ? 'left' : 'right';
+        if (!this.onWall){
+          this.onWall = true;
+          this.side = which;
+          this.player.setVelocity(0, this.fallSpeed);
+          this.score += 1; this.scoreText.setText(this.score);
+          this.bumpCamera('land');
+          this.updateFacing();
+          this.player.anims.play('land', true);
+          this.time.delayedCall(100, () => { if (this.onWall && this.alive) this.playSlide(); });
+        } else {
+          this.player.setVelocityX(0);
+        }
+      };
+      this.colLeft  = this.physics.add.collider(this.player, this.leftRail,  contact, null, this);
+      this.colRight = this.physics.add.collider(this.player, this.rightRail, contact, null, this);
+
+      // Input
+      this.input.on('pointerdown', () => this.jump());
+
+      // Spawner
+      this.spacingBaseMin = 260;
+      this.spacingBaseMax = 340;
+      this.nextSpawnY = this.startY + 260;
+      this.lastSide = 'right';
+      this.lastY = this.startY;
+      this.spawnTimer = this.time.addEvent({ delay: 60, loop: true, paused: true, callback: () => this.spawnAhead() });
+
+      // Start overlay
+      this.showStartOverlay();
+      this.snapToWall('left');
+
+      this.scale.on('resize', (gameSize) => this.onResize(gameSize));
+    }
+
+    // Texture helpers
+    makeRect(key,w,h,color){ const g=this.make.graphics({add:false}); g.fillStyle(color,1); g.fillRoundedRect(0,0,w,h,4); g.generateTexture(key,w,h); g.destroy(); }
+
+    // Overlays
+    showStartOverlay(){
+      this.hideGameOverOverlay();
+      if (this.overlayStart) this.overlayStart.destroy();
+      this.playing = false; this.alive = true; this.deathFall = false;
+      this.fallSpeed = FALL_MIN;
+      this.obstacles.clear(true,true);
+      this.snapToWall('left', this.startY);
+      this.spawnTimer.paused = true;
+      this.cam.stopFollow(); this.cam.setBounds(0,0,this.W,WORLD_H);
+      this.cam.setScroll(0, Math.max(0, this.startY - this.H*0.5));
+      this.cam.startFollow(this.player, true, 1, 1);
+      this.subText.setText('Tap to start').setVisible(true);
+      this.overlayStart = this.add.container(0,0).setScrollFactor(0).setDepth(1000);
+      const dim = this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({ useHandCursor:true });
+      const title = this.add.text(this.W/2, this.H*0.32, 'WALL JUMPER', {fontSize:'40px', fontStyle:'800', color:'#ffffff'}).setOrigin(0.5);
+      const instr = this.add.text(this.W/2, this.H*0.42, 'Tap anywhere to start\nScore on each wall touch\nAvoid the hazards', {fontSize:'18px', color:'#b7c0cf', align:'center'}).setOrigin(0.5);
+      this.overlayStart.add([dim,title,instr]);
+      this.input.once('pointerdown', () => this.startGame(), this);
+    }
+    hideStartOverlay(){ if (this.overlayStart){ this.overlayStart.destroy(); this.overlayStart = null; } }
+    hideGameOverOverlay(){ if (this.overlayGameOver){ this.overlayGameOver.destroy(); this.overlayGameOver = null; } }
+
+    showGameOverOverlay(){
+      this.hideStartOverlay();
+      if (this.overlayGameOver) this.overlayGameOver.destroy();
+      this.playing = false; this.spawnTimer.paused = true;
+      this.overlayGameOver = this.add.container(0,0).setScrollFactor(0).setDepth(1000);
+      const dim = this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({ useHandCursor:true });
+      const title = this.add.text(this.W/2, this.H*0.32, 'GAME OVER', {fontSize:'40px', fontStyle:'800', color:'#ffffff'}).setOrigin(0.5);
+      const stats = this.add.text(this.W/2, this.H*0.42, `Score ${this.score} • Best ${this.best}`, {fontSize:'18px', color:'#b7c0cf'}).setOrigin(0.5);
+      const tip = this.add.text(this.W/2, this.H*0.47, 'Tap anywhere to restart', {fontSize:'16px', color:'#9aa3b2'}).setOrigin(0.5);
+      this.overlayGameOver.add([dim,title,stats,tip]);
+      this.input.once('pointerdown', () => this.restart(), this);
+    }
+
+    // Flow
+    startGame(){
+      this.hideStartOverlay();
+      if (this.colLeft)  this.colLeft.active = true;
+      if (this.colRight) this.colRight.active = true;
+      this.score = 0; this.scoreText.setText('0');
+      this.subText.setText('Tap to jump').setVisible(true);
+      this.fallSpeed = FALL_MIN;
+      this.obstacles.clear(true,true);
+      this.player.clearTint();
+      this.snapToWall('left', this.startY);
+      this.nextSpawnY = this.startY + 260;
+      this.lastSide = 'right';
+      this.lastY = this.startY;
+      this.alive = true; this.deathFall = false; this.playing = true;
+      this.cam.rotation = 0; this.cam.setBounds(0,0,this.W,WORLD_H);
+      this.cam.startFollow(this.player, true, 1, 1);
+      this.spawnTimer.paused = false;
+    }
+    restart(){ this.hideGameOverOverlay(); this.startGame(); }
+
+    snapToWall(which, yOverride=null){
+      this.onWall = true; this.side = which;
+      const x = (which==='left') ? (this.WALL_X.left + 2) : (this.WALL_X.right - 2);
+      if (yOverride !== null) this.player.setY(yOverride);
+      this.player.setX(x);
+      this.player.setVelocity(0, this.fallSpeed);
+      this.updateFacing();
+      this.playSlide();
+    }
+
+    bumpCamera(kind){
+      const dur  = (kind==='jump') ? SHAKE_JUMP_D : SHAKE_LAND_D;
+      const amp  = (kind==='jump') ? SHAKE_JUMP_I : SHAKE_LAND_I;
+      this.cam.shake(dur, amp);
+    }
+
+    jump(){
+      if (!this.playing) return;
+      if (!this.alive){ this.restart(); return; }
+      if (!this.onWall) return;
+      this.bumpCamera('jump');
+      const dir = (this.side==='left') ? 1 : -1;
+      this.player.setVelocity(dir*BOOST_V, this.fallSpeed);
+      this.onWall = false;
+      this.subText.setVisible(false);
+      // Play jump sequence (13–16)
+      this.playJump();
+      this.time.delayedCall(BOOST_MS, () => {
+        if (!this.onWall && this.alive){ this.player.setVelocity(dir*PUSH_V, this.fallSpeed); }
+      });
+    }
+
+    getCurrentSpacing(){
+      const t = Phaser.Math.Clamp((this.fallSpeed - FALL_MIN)/(FALL_MAX - FALL_MIN), 0, 1);
+      const min = Phaser.Math.Linear(this.spacingBaseMin, this.spacingBaseMin + 70, t);
+      const max = Phaser.Math.Linear(this.spacingBaseMax, this.spacingBaseMax + 110, t);
+      return { min, max };
+    }
+
+    spawnAhead(){
+      if (!this.playing || !this.alive) return;
+      const bufferAhead = 1000;
+      const camY = this.player.y;
+      const { min:curMin, max:curMax } = this.getCurrentSpacing();
+      while (this.nextSpawnY < camY + bufferAhead) {
+        let side = (Math.random() < 0.8) ? ((this.lastSide === 'left') ? 'right' : 'left') : this.lastSide;
+        const railX = (side==='left') ? this.WALL_X.left : this.WALL_X.right;
+        const inward = Phaser.Math.Between(24, 38);
+        const x = (side==='left') ? (railX + inward + 5) : (railX - inward - 5);
+        const gap = Phaser.Math.Between(curMin|0, curMax|0);
+        const y = Math.max(this.nextSpawnY, this.lastY + gap);
+        const ob = this.obstacles.create(x, y, 'obHead').setImmovable(true).setDepth(1);
+        ob.body.setSize(40, 34).setOffset((46-40)/2, (40-34)/2);
+        ob.setData('side', side);
+        this.lastY = y;
+        this.lastSide = side;
+        this.nextSpawnY = y + gap;
+        if (Math.random() < 0.12) this.nextSpawnY += Phaser.Math.Between(40, 80);
+      }
+      const topCull = this.cameras.main.scrollY - 200;
+      this.obstacles.children.each(o => { if (o.active && o.y < topCull) o.destroy(); }, this);
+    }
+
+    update(_time, dt){
+      if (this.alive){
+        this.fallSpeed = Math.min(FALL_MAX, this.fallSpeed + FALL_ACCEL * (dt/1000));
+        if (this.player.body) this.player.setVelocityY(this.fallSpeed);
+      } else if (this.deathFall){
+        if (this.player.body) this.player.setVelocity(0, 900);
+        const bottomThreshold = this.cam.scrollY + this.H + 120;
+        if (!this.overlayGameOver && this.player.y > bottomThreshold){
+          this.deathFall = false;
+          this.showGameOverOverlay();
+        }
+      }
+      if (this.playing && this.alive && this.player.y > WORLD_H - 200){ this.gameOver(); }
+    }
+
+    gameOver(){
+      if (!this.alive) return;
+      this.alive = false; this.playing = false;
+      this.best = Math.max(this.best, this.score);
+      this.player.setTint(0xff4d4d);
+      this.spawnTimer.paused = true;
+      if (this.colLeft)  this.colLeft.active = false;
+      if (this.colRight) this.colRight.active = false;
+      this.cam.stopFollow();
+      this.onWall = false;
+      this.deathFall = true;
+      this.player.setVelocity(0, 900);
+    }
+
+    onResize(gameSize){
+      this.physics.world.setBounds(0, 0, gameSize.width, WORLD_H);
+      this.cam.setBounds(0, 0, gameSize.width, WORLD_H);
+      this.leftRail.setX(this.WALL_X.left).refreshBody();
+      this.rightRail.setX(this.WALL_X.right).refreshBody();
+      if (this.onWall) this.snapToWall(this.side);
+      this.scoreText.setPosition(this.W/2, 50);
+      this.subText.setPosition(this.W/2, this.H - 34);
+      if (this.overlayStart){
+        this.overlayStart.removeAll(true);
+        const dim = this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({ useHandCursor:true });
+        const title = this.add.text(this.W/2, this.H*0.32, 'WALL JUMPER', {fontSize:'40px', fontStyle:'800', color:'#ffffff'}).setOrigin(0.5);
+        const instr = this.add.text(this.W/2, this.H*0.42, 'Tap anywhere to start\nScore on each wall touch\nAvoid the hazards', {fontSize:'18px', color:'#b7c0cf', align:'center'}).setOrigin(0.5);
+        this.overlayStart.add([dim,title,instr]);
+      }
+      if (this.overlayGameOver){
+        this.overlayGameOver.removeAll(true);
+        const dim = this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({ useHandCursor:true });
+        const title = this.add.text(this.W/2, this.H*0.32, 'GAME OVER', {fontSize:'40px', fontStyle:'800', color:'#ffffff'}).setOrigin(0.5);
+        const stats = this.add.text(this.W/2, this.H*0.42, `Score ${this.score} • Best ${this.best}`, {fontSize:'18px', color:'#b7c0cf'}).setOrigin(0.5);
+        const tip = this.add.text(this.W/2, this.H*0.47, 'Tap anywhere to restart', {fontSize:'16px', color:'#9aa3b2'}).setOrigin(0.5);
+        this.overlayGameOver.add([dim,title,stats,tip]);
+      }
+    }
+  }
+
+  const game = new Phaser.Game({
+    type: Phaser.AUTO,
+    parent: 'game-root',
+    backgroundColor: '#0d0f14',
+    physics: { default: 'arcade', arcade:{ gravity:{y:0}, debug:false } },
+    scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH },
+    render: {
+      pixelArt: true, antialias: false, roundPixels: true,
+      resolution: Math.max(1, Math.min(window.devicePixelRatio || 1, 2))
+    },
+    scene: [Main]
+  });
+
+  const stageEl = document.querySelector('.stage');
+  new ResizeObserver(() => { window.dispatchEvent(new Event('resize')); }).observe(stageEl);
+})();
+</script>
+</body>
+</html>
