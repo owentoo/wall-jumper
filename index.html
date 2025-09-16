@@ -8,7 +8,7 @@
     :root { color-scheme: dark; }
     html, body {
       margin: 0; padding: 0; height: 100%;
-      background: #101317; color: #fff; /* ← updated */
+      background: #101317; color: #fff; /* updated earlier */
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
       overflow: hidden;
     }
@@ -80,10 +80,10 @@
   const WORLD_H       = 100000;
   const FALL_MIN      = 300, FALL_MAX = 520, FALL_ACCEL = 6.0;
 
-  // Faster jump
-  const PUSH_V        = 760;
-  const BOOST_V       = 1100;
-  const BOOST_MS      = 70;
+  // Faster cross jump (↑ from your previous values)
+  const PUSH_V        = 980;    // was 760
+  const BOOST_V       = 1450;   // was 1100
+  const BOOST_MS      = 60;     // was 70 (snappier takeoff)
 
   // Shared pixel scale for both character and walls
   const PIXEL_SCALE   = 2;
@@ -92,7 +92,7 @@
   const WALL_SRC_W    = 26;
   const WALL_DISP_W   = WALL_SRC_W * PIXEL_SCALE;
 
-  // Obstacle art (source 24x12 → display scaled by PIXEL_SCALE)
+  // Spike (source 24x12 → display scaled by PIXEL_SCALE)
   const OB_SRC_W = 24, OB_SRC_H = 12;
   const OB_DISP_W = OB_SRC_W * PIXEL_SCALE, OB_DISP_H = OB_SRC_H * PIXEL_SCALE;
 
@@ -111,11 +111,12 @@
       this.load.spritesheet('ninja', 'ninja_sheet.png', { frameWidth: 24, frameHeight: 34 });
       this.load.image('wallTile', 'wall.png');
 
-      // NEW: 24×12 obstacle sprite
-      this.load.image('obstacle', 'obstacle.png');
+      // REPLACED: red block → spike image from your repo
+      this.load.image('obstacle', 'spike.png'); // ← adjust path if it's in a subfolder
 
-      // Optional fallback if obstacle.png is missing (keeps you running)
-      this.makeRect('obstacle_fallback', OB_SRC_W, OB_SRC_H, 0xff4d4d);
+      // tiny fallback if spike is missing
+      const g = this.make.graphics({add:false});
+      g.fillStyle(0xff4d4d,1); g.fillRect(0,0,OB_SRC_W,OB_SRC_H); g.generateTexture('obstacle_fallback',OB_SRC_W,OB_SRC_H); g.destroy();
     }
 
     create(){
@@ -161,7 +162,7 @@
       this.cam = this.cameras.main;
       this.cam.setBounds(0,0,this.W,WORLD_H);
       this.cam.startFollow(this.player, true, 1, 1);
-      this.cam.setBackgroundColor('#101317'); // ← updated
+      this.cam.setBackgroundColor('#101317');
       this.cam.setRoundPixels(true);
 
       // HUD
@@ -170,7 +171,7 @@
       this.subText   = this.add.text(this.W/2, this.H-34, 'Tap to start', {fontSize:'16px', color:'#9aa3b2'})
         .setOrigin(0.5).setScrollFactor(0).setDepth(10);
 
-      // Obstacles
+      // Obstacles group
       this.obstacles = this.physics.add.group({ allowGravity:false, immovable:true });
       this.physics.add.overlap(this.player, this.obstacles, () => { if(this.playing) this.gameOver(); }, null, this);
 
@@ -217,9 +218,6 @@
       this.scale.on('resize', (gameSize) => this.onResize(gameSize));
     }
 
-    // Drawing helper
-    makeRect(key,w,h,color){ const g=this.make.graphics({add:false}); g.fillStyle(color,1); g.fillRect(0,0,w,h); g.generateTexture(key,w,h); g.destroy(); }
-
     // --- Exact wall placement (no gap) ---
     innerEdgeX(which){
       const rail = (which === 'left') ? this.leftRail : this.rightRail;
@@ -233,10 +231,8 @@
 
       const edge  = this.innerEdgeX(which);
       const pHalf = this.playerHalfWidth();
-      const pad   = 0; // ← no gap
-
-      let x = (which === 'left') ? (edge + pHalf + pad) : (edge - pHalf - pad);
-      x = Math.round(x); // pixel-perfect alignment
+      let x = (which === 'left') ? (edge + pHalf) : (edge - pHalf);
+      x = Math.round(x);
 
       if (yOverride !== null) this.player.setY(yOverride);
       this.player.setX(x);
@@ -246,7 +242,7 @@
       this.playSlide();
     }
 
-    // Overlays
+    // Overlays (unchanged)
     showStartOverlay(){
       this.hideGameOverOverlay();
       if (this.overlayStart) this.overlayStart.destroy();
@@ -272,7 +268,6 @@
     }
     hideStartOverlay(){ if (this.overlayStart){ this.overlayStart.destroy(); this.overlayStart = null; } }
     hideGameOverOverlay(){ if (this.overlayGameOver){ this.overlayGameOver.destroy(); this.overlayGameOver = null; } }
-
     showGameOverOverlay(){
       this.hideStartOverlay();
       if (this.overlayGameOver) this.overlayGameOver.destroy();
@@ -289,7 +284,6 @@
       this.input.once('pointerdown', () => this.restart(), this);
     }
 
-    // Flow
     startGame(){
       this.hideStartOverlay();
       if (this.colLeft)  this.colLeft.active = true;
@@ -320,6 +314,7 @@
 
     restart(){ this.hideGameOverOverlay(); this.startGame(); }
 
+    // Faster cross jump now
     jump(){
       if (!this.playing) return;
       if (!this.alive){ this.restart(); return; }
@@ -330,7 +325,6 @@
       this.onWall = false;
       this.subText.setVisible(false);
 
-      // Play jump sequence (13–16)
       this.playJump();
       this.time.delayedCall(BOOST_MS, () => {
         if (!this.onWall && this.alive){ this.player.setVelocity(dir*PUSH_V, this.fallSpeed); }
@@ -344,7 +338,7 @@
       return { min, max };
     }
 
-    // ---- NEW: spawn obstacles that STICK to the wall inner edge, at same DPI ----
+    // Spawn spikes that stick to wall inner edge, at same DPI
     spawnAhead(){
       if (!this.playing || !this.alive) return;
       const bufferAhead = 1000;
@@ -352,27 +346,23 @@
       const { min:curMin, max:curMax } = this.getCurrentSpacing();
 
       while (this.nextSpawnY < camY + bufferAhead) {
-        // Prefer alternation
         let side = (Math.random() < 0.8) ? ((this.lastSide === 'left') ? 'right' : 'left') : this.lastSide;
 
         const y = Math.max(this.nextSpawnY, this.lastY + Phaser.Math.Between(curMin|0, curMax|0));
 
-        // Choose texture (fallback if file missing)
         const texKey = this.textures.exists('obstacle') ? 'obstacle' : 'obstacle_fallback';
-
         const ob = this.obstacles.create(0, y, texKey).setDepth(1);
         ob.setScale(PIXEL_SCALE);
-        // Tight hitbox: 24x12 @ source => multiply by PIXEL_SCALE to match display DPI
-        ob.body.setSize(OB_DISP_W, OB_DISP_H, true);
+
+        // Tight hitbox to 24x12 @ display DPI; trim 1px for fairness against angled spike tips
+        ob.body.setSize(OB_DISP_W - 2, OB_DISP_H - 2, true);
 
         ob.setData('side', side);
 
-        // Snap flush to inner wall edge
         const edge = this.innerEdgeX(side);
         const half = OB_DISP_W * 0.5;
         ob.x = (side === 'left') ? Math.round(edge + half) : Math.round(edge - half);
 
-        // Keep them truly immovable / stuck
         ob.body.allowGravity = false;
         ob.setImmovable(true);
         ob.setVelocity(0, 0);
@@ -380,12 +370,9 @@
         this.lastY = y;
         this.lastSide = side;
         this.nextSpawnY = y + Phaser.Math.Between(curMin|0, curMax|0);
-
-        // occasional extra spacing
         if (Math.random() < 0.12) this.nextSpawnY += Phaser.Math.Between(40, 80);
       }
 
-      // Cull above camera
       const topCull = this.cameras.main.scrollY - 200;
       this.obstacles.children.each(o => { if (o.active && o.y < topCull) o.destroy(); }, this);
     }
@@ -404,7 +391,7 @@
       }
       if (this.playing && this.alive && this.player.y > WORLD_H - 200){ this.gameOver(); }
 
-      // Safety: keep every obstacle locked to its wall each frame
+      // Keep obstacles glued to wall (safety)
       this.obstacles.children.iterate(ob => {
         if (!ob || !ob.active) return;
         const side = ob.getData('side');
@@ -450,7 +437,7 @@
   const game = new Phaser.Game({
     type: Phaser.AUTO,
     parent: 'game-root',
-    backgroundColor: '#101317', // ← updated
+    backgroundColor: '#101317',
     physics: { default: 'arcade', arcade:{ gravity:{y:0}, debug:false } },
     scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH },
     render: {
