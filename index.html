@@ -1,9 +1,10 @@
+
 <!doctype html>
 <html>
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"/>
-  <title>Wall Jumper — Proportional Layout</title>
+  <title>Wall Jumper — Width ≤ 600, Height = Available</title>
   <style>
     :root { color-scheme: dark; }
     html, body {
@@ -85,68 +86,33 @@
   const BOOST_V       = 1450;
   const BOOST_MS      = 60;
 
+  // Pixel scale used across sprites
+  const PIXEL_SCALE   = 2;
+
+  // Wall art (source)
+  const WALL_SRC_W    = 26;
+  const WALL_DISP_W   = WALL_SRC_W * PIXEL_SCALE;
+
+  // Spikes (24x12 source → display scaled by PIXEL_SCALE)
+  const OB_SRC_W = 24, OB_SRC_H = 12;
+  const OB_DISP_W = OB_SRC_W * PIXEL_SCALE, OB_DISP_H = OB_SRC_H * PIXEL_SCALE;
+  const SPIKE_INSET_SRC = 2, SPIKE_INSET = SPIKE_INSET_SRC * PIXEL_SCALE; // sink into wall to kill gaps
+
   // AUDIO mapping & smoothing (tempo follows speed gently)
   const MUSIC_RATE_MIN = 1.00;
-  const MUSIC_RATE_MAX = 1.12;
+  const MUSIC_RATE_MAX = 1.12; // gentle top-end so it matches gameplay feel
   const MUSIC_VOLUME   = 0.60; // base music volume
-  const MUSIC_SMOOTH   = 0.06;
-
-  // ---- Percent-based metrics (baseline 600px width) ----
-  // These fractions match your previous absolute sizes at W=600:
-  // wall = 52px → 52/600, corridor gap center-to-center factor = 0.75, etc.
-  const BASE_W = 600;
-  const FRAC = {
-    WALL_W:        52 / BASE_W,    // 52px @ 600
-    GAP:           0.75,           // 450px @ 600
-    OB_W:          48 / BASE_W,    // 24*2 px @ 600
-    OB_H:          24 / BASE_W,    // 12*2 px @ 600
-    SPIKE_INSET:    4 / BASE_W,    // 2*2 px @ 600, to sink spikes slightly
-    NINJA_DISP_W:  48 / BASE_W,    // sprite display width (24*2)
-    NINJA_BODY_W:  40 / BASE_W,    // physics body width (20*2)
-    NINJA_BODY_H:  60 / BASE_W     // physics body height (30*2)
-  };
-
-  // Helper to round scale to "friendly" steps so pixel art stays crisp.
-  function niceScale(raw){
-    // Round to nearest 0.05 to reduce subpixel blur while staying flexible.
-    return Math.max(0.1, Math.round(raw * 20) / 20);
-  }
+  const MUSIC_SMOOTH   = 0.06; // 0..1, higher = quicker rate changes
 
   class Main extends Phaser.Scene {
     constructor(){ super('main'); }
-
-    // Live metrics derived from current canvas width
-    recalcMetrics(){
-      const W = this.scale.width;
-      this.metrics = {
-        W,
-        H: this.scale.height,
-        wallW: Math.max(2, Math.round(W * FRAC.WALL_W)),
-        gap:   Math.round(W * FRAC.GAP),
-        obW:   Math.max(2, Math.round(W * FRAC.OB_W)),
-        obH:   Math.max(2, Math.round(W * FRAC.OB_H)),
-        inset: Math.round(W * FRAC.SPIKE_INSET),
-        ninjaDispW: Math.max(2, Math.round(W * FRAC.NINJA_DISP_W)),
-        ninjaBodyW: Math.max(2, Math.round(W * FRAC.NINJA_BODY_W)),
-        ninjaBodyH: Math.max(2, Math.round(W * FRAC.NINJA_BODY_H))
-      };
-      // Derived
-      this.metrics.leftX  = (W - this.metrics.gap)/2;
-      this.metrics.rightX = (W + this.metrics.gap)/2;
-      this.metrics.corridor = this.metrics.gap - this.metrics.wallW; // inner-edge to inner-edge
-    }
-
-    get W(){ return this.metrics?.W ?? this.scale.width; }
-    get H(){ return this.metrics?.H ?? this.scale.height; }
-    get WALL_GAP(){ return this.metrics.gap; }
-    get WALL_DISP_W(){ return this.metrics.wallW; }
+    get W(){ return this.scale.width; }
+    get H(){ return this.scale.height; }
+    get WALL_GAP(){ return Math.max(120, Math.min(this.W * 0.75, this.W - 60)); }
     get WALL_X(){
-      return { left: this.metrics.leftX, right: this.metrics.rightX };
-    }
-
-    // Convert desired display width to sprite scale for a given source width
-    scaleForDisplayWidth(sourceW, desiredDispW){
-      return niceScale(desiredDispW / sourceW);
+      const left  = (this.W - this.WALL_GAP)/2;
+      const right = (this.W + this.WALL_GAP)/2;
+      return { left, right };
     }
 
     preload(){
@@ -161,14 +127,11 @@
 
       // fallback obstacle if asset missing
       const g = this.make.graphics({add:false});
-      g.fillStyle(0xff4d4d,1); g.fillRect(0,0,24,12);
-      g.generateTexture('obstacle_fallback',24,12); g.destroy();
+      g.fillStyle(0xff4d4d,1); g.fillRect(0,0,OB_SRC_W,OB_SRC_H);
+      g.generateTexture('obstacle_fallback',OB_SRC_W,OB_SRC_H); g.destroy();
     }
 
     create(){
-      // Metrics
-      this.recalcMetrics();
-
       // Animations
       this.anims.create({ key:'slide', frames: this.anims.generateFrameNumbers('ninja', { start:0,  end:11 }), frameRate:18, repeat:-1 });
       this.anims.create({ key:'jump',  frames: this.anims.generateFrameNumbers('ninja', { start:12, end:15 }), frameRate:18, repeat:0  });
@@ -178,31 +141,24 @@
       this.physics.world.setBounds(0, 0, this.W, WORLD_H);
 
       // Visual walls
-      this.leftWallVis  = this.add.tileSprite(this.WALL_X.left,  WORLD_H/2, this.WALL_DISP_W, WORLD_H, 'wallTile')
-        .setOrigin(0.5, 0.5).setDepth(0);
-      this.rightWallVis = this.add.tileSprite(this.WALL_X.right, WORLD_H/2, this.WALL_DISP_W, WORLD_H, 'wallTile')
-        .setOrigin(0.5, 0.5).setDepth(0).setFlipX(true);
+      this.leftWallVis  = this.add.tileSprite(this.WALL_X.left,  WORLD_H/2, WALL_DISP_W, WORLD_H, 'wallTile')
+        .setOrigin(0.5, 0.5).setDepth(0).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
+      this.rightWallVis = this.add.tileSprite(this.WALL_X.right, WORLD_H/2, WALL_DISP_W, WORLD_H, 'wallTile')
+        .setOrigin(0.5, 0.5).setDepth(0).setFlipX(true).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
 
-      // Physics rails sized to wall thickness
+      // Physics rails
       this.add.graphics().generateTexture('rail1x1', 1, 1);
       this.leftRail  = this.physics.add.staticImage(this.WALL_X.left,  WORLD_H/2, 'rail1x1').setAlpha(0);
       this.rightRail = this.physics.add.staticImage(this.WALL_X.right, WORLD_H/2, 'rail1x1').setAlpha(0);
-      this.leftRail.setDisplaySize(this.WALL_DISP_W, WORLD_H).refreshBody();
-      this.rightRail.setDisplaySize(this.WALL_DISP_W, WORLD_H).refreshBody();
+      this.leftRail.setDisplaySize(WALL_DISP_W, WORLD_H).refreshBody();
+      this.rightRail.setDisplaySize(WALL_DISP_W, WORLD_H).refreshBody();
 
-      // Player (percent-based display & body)
+      // Player
       this.startY = Math.min(700, Math.max(420, this.H * 0.75));
       this.player = this.physics.add.sprite(this.W/2, this.startY, 'ninja', 0).setDepth(2);
-
-      const pScale = this.scaleForDisplayWidth(24, this.metrics.ninjaDispW);
-      this.player.setScale(pScale);
-
-      // Physics body inches in from sprite edges (kept proportional)
-      this.player.body.setSize(this.metrics.ninjaBodyW, this.metrics.ninjaBodyH, true);
-      const dispW = 24 * pScale, dispH = 34 * pScale;
-      const bodyOffsetX = (dispW - this.metrics.ninjaBodyW)/2;
-      const bodyOffsetY = (dispH - this.metrics.ninjaBodyH)/2;
-      this.player.body.setOffset(bodyOffsetX, bodyOffsetY);
+      this.player.setScale(PIXEL_SCALE);
+      this.player.body.setSize(20, 30, true);
+      this.player.body.setOffset((24-20)/2, (34-30)/2);
 
       // State
       this.physics.world.gravity.y = 0;
@@ -248,10 +204,10 @@
       this.jumpSfx = this.sound.add('jumpSfx', { volume: 0 });
       this.landSfx = this.sound.add('landSfx', { volume: 0 });
 
-      // Centralized volume application (SFX = 1/3 music)
+      // Centralized volume application
       this.applyAudioSettings = () => {
         const musicVol = this.musicMuted ? 0 : this.musicBaseVolume;
-        const sfxVol   = this.sfxMuted   ? 0 : (this.musicBaseVolume / 3);
+        const sfxVol   = this.sfxMuted   ? 0 : (this.musicBaseVolume / 3); // <<< SFX = 1/3 of music
         if (this.music)   this.music.setVolume(musicVol);
         if (this.jumpSfx) this.jumpSfx.setVolume(sfxVol);
         if (this.landSfx) this.landSfx.setVolume(sfxVol);
@@ -288,7 +244,7 @@
       // Generic input (jump on tap)
       this.input.on('pointerdown', () => this.jump());
 
-      // Spawner (spacing stays gameplay-tuned; proportions are visual/physics sizes)
+      // Spawner
       this.spacingBaseMin = 260;
       this.spacingBaseMax = 340;
       this.nextSpawnY = this.startY + 260;
@@ -296,9 +252,10 @@
       this.lastY = this.startY;
       this.spawnTimer = this.time.addEvent({ delay: 60, loop: true, paused: true, callback: () => this.spawnAhead() });
 
-      // Start overlay & initial placement (frozen)
+      // Start overlay & initial placement
       this.showStartOverlay();
-      this.snapToWall('left', this.startY, { stationary:true });
+      // Place and FREEZE the ninja so there is no pre-start drift
+      this.snapToWall('left', this.startY, { stationary:true }); // <<< freeze
       this.player.setVelocity(0,0);
 
       // Resize
@@ -316,7 +273,7 @@
     }
     playerHalfWidth(){ return this.player?.body ? this.player.body.halfWidth : (this.player.displayWidth * 0.5); }
 
-    // Snap to wall, with option to keep velocity zero before game starts
+    // Add stationary control to prevent pre-start drift
     snapToWall(which, yOverride = null, { stationary = false } = {}){
       this.onWall = true;
       this.side = which;
@@ -329,6 +286,7 @@
       if (yOverride !== null) this.player.setY(yOverride);
       this.player.setX(x);
 
+      // If stationary (e.g., on start screen), do not apply falling velocity
       this.player.setVelocity(0, stationary ? 0 : this.fallSpeed);
 
       this.updateFacing();
@@ -376,6 +334,7 @@
       const title = this.add.text(this.W/2, this.H*0.30, 'WALL JUMPER', {fontSize:'40px', fontStyle:'800', color:'#ffffff'}).setOrigin(0.5);
       const instr = this.add.text(this.W/2, this.H*0.40, 'Tap anywhere to start\nScore on each wall touch\nAvoid the hazards', {fontSize:'18px', color:'#b7c0cf', align:'center'}).setOrigin(0.5);
 
+      // --- Audio toggles (start screen) ---
       const musicToggle = this.makeToggleButton({
         x: this.W/2 - 95, y: this.H*0.55,
         label: 'Music',
@@ -391,9 +350,11 @@
 
       this.overlayStart.add([dim,title,instr, musicToggle.group, sfxToggle.group]);
 
-      this.snapToWall('left', this.startY, { stationary:true });
+      // Ensure ninja is EXACTLY at start position and frozen before the run
+      this.snapToWall('left', this.startY, { stationary:true }); // <<< freeze on overlay show
       this.player.setVelocity(0,0);
 
+      // Tap to start → starts music and run (works on mobile policies)
       this.input.once('pointerdown', () => this.startGame(), this);
     }
     hideStartOverlay(){ if (this.overlayStart){ this.overlayStart.destroy(); this.overlayStart = null; } }
@@ -423,11 +384,12 @@
       if (this.colLeft)  this.colLeft.active = true;
       if (this.colRight) this.colRight.active = true;
 
+      // Music ALWAYS restarts at beginning of a run
       if (this.music){
         if (this.music.isPlaying) this.music.stop();
         this.music.setRate(MUSIC_RATE_MIN);
-        this.applyAudioSettings();
-        this.music.play();
+        this.applyAudioSettings(); // ensure current mute/volumes
+        this.music.play(); // triggered from pointerdown path
       }
 
       this.score = 0; this.scoreText.setText('0');
@@ -436,7 +398,8 @@
       this.obstacles.clear(true,true);
       this.player.clearTint();
 
-      this.snapToWall('left', this.startY, { stationary:false });
+      // Place and UNFREEZE for gameplay
+      this.snapToWall('left', this.startY, { stationary:false }); // <<< same position, now moving
 
       this.nextSpawnY = this.startY + 260;
       this.lastSide = 'right';
@@ -481,7 +444,7 @@
       return { min, max };
     }
 
-    // Spawn spikes proportional to width, stick to walls with proportional inset
+    // Spawn spikes: stick to wall, flip left, inset
     spawnAhead(){
       if (!this.playing || !this.alive) return;
       const bufferAhead = 1000;
@@ -494,22 +457,16 @@
 
         const texKey = this.textures.exists('obstacle') ? 'obstacle' : 'obstacle_fallback';
         const ob = this.obstacles.create(0, y, texKey).setDepth(1);
-
-        // Scale obstacle to desired display width/height
-        const obScaleX = this.scaleForDisplayWidth(24, this.metrics.obW);
-        const obScaleY = niceScale(this.metrics.obH / 12);
-        ob.setScale(obScaleX, obScaleY);
-
-        // Match physics body to display (slightly trimmed for fairness)
-        ob.body.setSize(this.metrics.obW - 2, this.metrics.obH, true);
+        ob.setScale(PIXEL_SCALE);
+        ob.body.setSize(OB_DISP_W - 2, OB_DISP_H, true);
 
         ob.setData('side', side);
         ob.setFlipX(side === 'left');
 
         const edge = this.innerEdgeX(side);
-        const half = this.metrics.obW * 0.5;
-        const targetX = (side === 'left') ? Math.round(edge + half - this.metrics.inset)
-                                          : Math.round(edge - half + this.metrics.inset);
+        const half = OB_DISP_W * 0.5;
+        const targetX = (side === 'left') ? Math.round(edge + half - SPIKE_INSET)
+                                          : Math.round(edge - half + SPIKE_INSET);
         ob.x = targetX;
 
         ob.body.allowGravity = false;
@@ -541,14 +498,14 @@
       }
       if (this.playing && this.alive && this.player.y > WORLD_H - 200){ this.gameOver(); }
 
-      // Keep spikes locked to wall each frame (with proportional inset)
+      // Keep spikes locked to wall each frame
       this.obstacles.children.iterate(ob => {
         if (!ob || !ob.active) return;
         const side = ob.getData('side');
         const edge = this.innerEdgeX(side);
-        const half = this.metrics.obW * 0.5;
-        const targetX = (side === 'left') ? Math.round(edge + half - this.metrics.inset)
-                                          : Math.round(edge - half + this.metrics.inset);
+        const half = OB_DISP_W * 0.5;
+        const targetX = (side === 'left') ? Math.round(edge + half - SPIKE_INSET)
+                                          : Math.round(edge - half + SPIKE_INSET);
         if (ob.x !== targetX) { ob.x = targetX; ob.body.updateFromGameObject(); }
         ob.setFlipX(side === 'left');
         ob.setVelocityX(0);
@@ -584,34 +541,17 @@
     }
 
     onResize(gameSize){
-      // Recompute proportional metrics
-      this.recalcMetrics();
+      this.physics.world.setBounds(0, 0, gameSize.width, WORLD_H);
+      this.cam.setBounds(0, 0, gameSize.width, WORLD_H);
 
-      // Update world & camera bounds
-      this.physics.world.setBounds(0, 0, this.W, WORLD_H);
-      this.cam.setBounds(0, 0, this.W, WORLD_H);
+      this.leftRail.setPosition(this.WALL_X.left,  WORLD_H/2).setDisplaySize(WALL_DISP_W, WORLD_H).refreshBody();
+      this.rightRail.setPosition(this.WALL_X.right, WORLD_H/2).setDisplaySize(WALL_DISP_W, WORLD_H).refreshBody();
 
-      // Rails match proportional wall width
-      this.leftRail.setPosition(this.WALL_X.left,  WORLD_H/2).setDisplaySize(this.WALL_DISP_W, WORLD_H).refreshBody();
-      this.rightRail.setPosition(this.WALL_X.right, WORLD_H/2).setDisplaySize(this.WALL_DISP_W, WORLD_H).refreshBody();
+      this.leftWallVis.setPosition(this.WALL_X.left, WORLD_H/2).setSize(WALL_DISP_W, WORLD_H).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
+      this.rightWallVis.setPosition(this.WALL_X.right, WORLD_H/2).setSize(WALL_DISP_W, WORLD_H).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
 
-      // Walls visuals match exactly
-      this.leftWallVis.setPosition(this.WALL_X.left,  WORLD_H/2).setSize(this.WALL_DISP_W, WORLD_H);
-      this.rightWallVis.setPosition(this.WALL_X.right, WORLD_H/2).setSize(this.WALL_DISP_W, WORLD_H);
+      if (this.onWall) this.snapToWall(this.side, null, { stationary: !this.playing }); // <<< keep exact alignment
 
-      // Ninja display & body rescale to keep proportions
-      const pScale = this.scaleForDisplayWidth(24, this.metrics.ninjaDispW);
-      this.player.setScale(pScale);
-      const dispW = 24 * pScale, dispH = 34 * pScale;
-      this.player.body.setSize(this.metrics.ninjaBodyW, this.metrics.ninjaBodyH, true);
-      const bodyOffsetX = (dispW - this.metrics.ninjaBodyW)/2;
-      const bodyOffsetY = (dispH - this.metrics.ninjaBodyH)/2;
-      this.player.body.setOffset(bodyOffsetX, bodyOffsetY);
-
-      // Keep player perfectly flush to wall in both start and play states
-      if (this.onWall) this.snapToWall(this.side, null, { stationary: !this.playing });
-
-      // HUD
       this.scoreText.setPosition(this.W/2, 50);
       this.subText.setPosition(this.W/2, this.H - 34);
     }
