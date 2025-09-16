@@ -1,4 +1,3 @@
-
 <!doctype html>
 <html>
 <head>
@@ -9,7 +8,7 @@
     :root { color-scheme: dark; }
     html, body {
       margin: 0; padding: 0; height: 100%;
-      background: #0d0f14; color: #fff;
+      background: #101317; color: #fff; /* ← updated */
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
       overflow: hidden;
     }
@@ -93,6 +92,10 @@
   const WALL_SRC_W    = 26;
   const WALL_DISP_W   = WALL_SRC_W * PIXEL_SCALE;
 
+  // Obstacle art (source 24x12 → display scaled by PIXEL_SCALE)
+  const OB_SRC_W = 24, OB_SRC_H = 12;
+  const OB_DISP_W = OB_SRC_W * PIXEL_SCALE, OB_DISP_H = OB_SRC_H * PIXEL_SCALE;
+
   class Main extends Phaser.Scene {
     constructor(){ super('main'); }
     get W(){ return this.scale.width; }
@@ -107,7 +110,12 @@
     preload(){
       this.load.spritesheet('ninja', 'ninja_sheet.png', { frameWidth: 24, frameHeight: 34 });
       this.load.image('wallTile', 'wall.png');
-      this.makeRect('obHead', 46, 40, 0xff4d4d);
+
+      // NEW: 24×12 obstacle sprite
+      this.load.image('obstacle', 'obstacle.png');
+
+      // Optional fallback if obstacle.png is missing (keeps you running)
+      this.makeRect('obstacle_fallback', OB_SRC_W, OB_SRC_H, 0xff4d4d);
     }
 
     create(){
@@ -153,7 +161,7 @@
       this.cam = this.cameras.main;
       this.cam.setBounds(0,0,this.W,WORLD_H);
       this.cam.startFollow(this.player, true, 1, 1);
-      this.cam.setBackgroundColor('#0d0f14');
+      this.cam.setBackgroundColor('#101317'); // ← updated
       this.cam.setRoundPixels(true);
 
       // HUD
@@ -163,7 +171,7 @@
         .setOrigin(0.5).setScrollFactor(0).setDepth(10);
 
       // Obstacles
-      this.obstacles = this.physics.add.group();
+      this.obstacles = this.physics.add.group({ allowGravity:false, immovable:true });
       this.physics.add.overlap(this.player, this.obstacles, () => { if(this.playing) this.gameOver(); }, null, this);
 
       // Helpers
@@ -171,7 +179,7 @@
       this.playSlide  = () => this.player.anims.play('slide', true);
       this.playJump   = () => this.player.anims.play('jump',  true);
 
-      // Rail contact handler (land) — no camera shake
+      // Rail contact handler (land)
       const contact = (_player, rail) => {
         if (!this.alive || !this.playing) return;
         const which = (rail === this.leftRail) ? 'left' : 'right';
@@ -184,7 +192,7 @@
           this.player.anims.play('land', true);
           this.time.delayedCall(80, () => { if (this.onWall && this.alive) this.playSlide(); });
         } else {
-          this.player.setVelocityX(0);
+          this.player.setVelocityX(0); // stick
         }
       };
       this.colLeft  = this.physics.add.collider(this.player, this.leftRail,  contact, null, this);
@@ -210,7 +218,7 @@
     }
 
     // Drawing helper
-    makeRect(key,w,h,color){ const g=this.make.graphics({add:false}); g.fillStyle(color,1); g.fillRoundedRect(0,0,w,h,4); g.generateTexture(key,w,h); g.destroy(); }
+    makeRect(key,w,h,color){ const g=this.make.graphics({add:false}); g.fillStyle(color,1); g.fillRect(0,0,w,h); g.generateTexture(key,w,h); g.destroy(); }
 
     // --- Exact wall placement (no gap) ---
     innerEdgeX(which){
@@ -336,32 +344,48 @@
       return { min, max };
     }
 
+    // ---- NEW: spawn obstacles that STICK to the wall inner edge, at same DPI ----
     spawnAhead(){
       if (!this.playing || !this.alive) return;
       const bufferAhead = 1000;
       const camY = this.player.y;
       const { min:curMin, max:curMax } = this.getCurrentSpacing();
+
       while (this.nextSpawnY < camY + bufferAhead) {
+        // Prefer alternation
         let side = (Math.random() < 0.8) ? ((this.lastSide === 'left') ? 'right' : 'left') : this.lastSide;
-        const railX = (side==='left') ? this.WALL_X.left : this.WALL_X.right;
 
-        const inward = Phaser.Math.Between(20, 38);
-        const x = (side==='left') ? (railX + inward + WALL_DISP_W/2)
-                                  : (railX - inward - WALL_DISP_W/2);
+        const y = Math.max(this.nextSpawnY, this.lastY + Phaser.Math.Between(curMin|0, curMax|0));
 
-        const gap = Phaser.Math.Between(curMin|0, curMax|0);
-        const y = Math.max(this.nextSpawnY, this.lastY + gap);
+        // Choose texture (fallback if file missing)
+        const texKey = this.textures.exists('obstacle') ? 'obstacle' : 'obstacle_fallback';
 
-        const ob = this.obstacles.create(x, y, 'obHead').setImmovable(true).setDepth(1);
-        ob.body.setSize(40, 34).setOffset((46-40)/2, (40-34)/2);
+        const ob = this.obstacles.create(0, y, texKey).setDepth(1);
+        ob.setScale(PIXEL_SCALE);
+        // Tight hitbox: 24x12 @ source => multiply by PIXEL_SCALE to match display DPI
+        ob.body.setSize(OB_DISP_W, OB_DISP_H, true);
+
         ob.setData('side', side);
+
+        // Snap flush to inner wall edge
+        const edge = this.innerEdgeX(side);
+        const half = OB_DISP_W * 0.5;
+        ob.x = (side === 'left') ? Math.round(edge + half) : Math.round(edge - half);
+
+        // Keep them truly immovable / stuck
+        ob.body.allowGravity = false;
+        ob.setImmovable(true);
+        ob.setVelocity(0, 0);
 
         this.lastY = y;
         this.lastSide = side;
-        this.nextSpawnY = y + gap;
+        this.nextSpawnY = y + Phaser.Math.Between(curMin|0, curMax|0);
 
+        // occasional extra spacing
         if (Math.random() < 0.12) this.nextSpawnY += Phaser.Math.Between(40, 80);
       }
+
+      // Cull above camera
       const topCull = this.cameras.main.scrollY - 200;
       this.obstacles.children.each(o => { if (o.active && o.y < topCull) o.destroy(); }, this);
     }
@@ -379,6 +403,17 @@
         }
       }
       if (this.playing && this.alive && this.player.y > WORLD_H - 200){ this.gameOver(); }
+
+      // Safety: keep every obstacle locked to its wall each frame
+      this.obstacles.children.iterate(ob => {
+        if (!ob || !ob.active) return;
+        const side = ob.getData('side');
+        const edge = this.innerEdgeX(side);
+        const half = OB_DISP_W * 0.5;
+        const targetX = (side === 'left') ? (edge + half) : (edge - half);
+        if (ob.x !== targetX) { ob.x = targetX; ob.body.updateFromGameObject(); }
+        ob.setVelocityX(0);
+      });
     }
 
     gameOver(){
@@ -415,7 +450,7 @@
   const game = new Phaser.Game({
     type: Phaser.AUTO,
     parent: 'game-root',
-    backgroundColor: '#0d0f14',
+    backgroundColor: '#101317', // ← updated
     physics: { default: 'arcade', arcade:{ gravity:{y:0}, debug:false } },
     scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH },
     render: {
