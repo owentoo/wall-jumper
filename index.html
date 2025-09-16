@@ -89,10 +89,11 @@
   const OB_DISP_W = OB_SRC_W * PIXEL_SCALE, OB_DISP_H = OB_SRC_H * PIXEL_SCALE;
   const SPIKE_INSET_SRC = 2, SPIKE_INSET = SPIKE_INSET_SRC * PIXEL_SCALE;
 
-  // AUDIO: how the music rate scales with speed
+  // AUDIO tempo mapping & smoothing
   const MUSIC_RATE_MIN = 1.00;
-  const MUSIC_RATE_MAX = 1.35; // feel free to raise to 1.5 for wilder tempo
+  const MUSIC_RATE_MAX = 1.12;   // gentler top-end so tempo tracks gameplay without racing
   const MUSIC_VOLUME   = 0.6;
+  const MUSIC_SMOOTH   = 0.06;   // 0..1, higher = faster reaction
 
   class Main extends Phaser.Scene {
     constructor(){ super('main'); }
@@ -110,8 +111,8 @@
       this.load.image('wallTile', 'wall.png');
       this.load.image('obstacle', 'spike.png');
 
-      // AUDIO: load your song (mp3/ogg/wav)
-      this.load.audio('bgm', ['NINJA.mp3']); // change path if needed
+      // AUDIO
+      this.load.audio('bgm', ['NINJA.mp3']);
 
       // fallback obstacle if asset missing
       const g = this.make.graphics({add:false});
@@ -180,7 +181,7 @@
       this.playSlide  = () => this.player.anims.play('slide', true);
       this.playJump   = () => this.player.anims.play('jump',  true);
 
-      // AUDIO: create (but don't play yet!)
+      // AUDIO object (created now, started in startGame)
       this.music = this.sound.add('bgm', { loop: true, volume: MUSIC_VOLUME, rate: MUSIC_RATE_MIN });
 
       // Rail contact handler (land)
@@ -202,7 +203,7 @@
       this.colLeft  = this.physics.add.collider(this.player, this.leftRail,  contact, null, this);
       this.colRight = this.physics.add.collider(this.player, this.rightRail, contact, null, this);
 
-      // Input
+      // Input: the overlay sets up the tap that calls startGame()
       this.input.on('pointerdown', () => this.jump());
 
       // Spawner
@@ -213,15 +214,15 @@
       this.lastY = this.startY;
       this.spawnTimer = this.time.addEvent({ delay: 60, loop: true, paused: true, callback: () => this.spawnAhead() });
 
-      // Start overlay & initial placement
+      // Overlays & placement
       this.showStartOverlay();
       this.snapToWall('left');
 
-      // Resize handling
+      // Resize
       this.scale.on('resize', (gameSize) => this.onResize(gameSize));
 
-      // (Optional) stop audio if tab hidden
-      this.game.events.on(Phaser.Core.Events.BLUR, () => { if (this.music.isPlaying) this.music.pause(); });
+      // Pause/resume audio on blur/focus (optional)
+      this.game.events.on(Phaser.Core.Events.BLUR, () => { if (this.music && this.music.isPlaying) this.music.pause(); });
       this.game.events.on(Phaser.Core.Events.FOCUS, () => { if (this.playing && this.music && this.music.isPaused) this.music.resume(); });
     }
 
@@ -271,14 +272,8 @@
       const instr = this.add.text(this.W/2, this.H*0.42, 'Tap anywhere to start\nScore on each wall touch\nAvoid the hazards', {fontSize:'18px', color:'#b7c0cf', align:'center'}).setOrigin(0.5);
       this.overlayStart.add([dim,title,instr]);
 
-      // Only play music when the game actually starts (first tap)
-      this.input.once('pointerdown', () => {
-        if (this.music && !this.music.isPlaying) {
-          this.music.setRate(MUSIC_RATE_MIN);
-          this.music.play();
-        }
-        this.startGame();
-      }, this);
+      // Tap to start (also starts music here by calling startGame)
+      this.input.once('pointerdown', () => this.startGame(), this);
     }
     hideStartOverlay(){ if (this.overlayStart){ this.overlayStart.destroy(); this.overlayStart = null; } }
     hideGameOverOverlay(){ if (this.overlayGameOver){ this.overlayGameOver.destroy(); this.overlayGameOver = null; } }
@@ -307,6 +302,13 @@
       this.hideStartOverlay();
       if (this.colLeft)  this.colLeft.active = true;
       if (this.colRight) this.colRight.active = true;
+
+      // music ALWAYS restarts at the beginning of a run (initial start or restart)
+      if (this.music){
+        if (this.music.isPlaying) this.music.stop();
+        this.music.setRate(MUSIC_RATE_MIN);
+        this.music.play(); // safe: called from a pointerdown-initiated path
+      }
 
       this.score = 0; this.scoreText.setText('0');
       this.subText.setText('Tap to jump').setVisible(true);
@@ -423,11 +425,14 @@
         ob.setVelocityX(0);
       });
 
-      // AUDIO: ramp music tempo with fall speed
+      // AUDIO: ramp music tempo with fall speed (eased + smoothed)
       if (this.music && this.music.isPlaying) {
         const t = Phaser.Math.Clamp((this.fallSpeed - FALL_MIN)/(FALL_MAX - FALL_MIN), 0, 1);
-        const rate = Phaser.Math.Linear(MUSIC_RATE_MIN, MUSIC_RATE_MAX, t);
-        if (Math.abs(this.music.rate - rate) > 0.005) this.music.setRate(rate);
+        const eased = Phaser.Math.Easing.Quadratic.Out(t); // gentle early ramp, faster late ramp
+        const desired = Phaser.Math.Linear(MUSIC_RATE_MIN, MUSIC_RATE_MAX, eased);
+        const current = this.music.rate;
+        const next = current + (desired - current) * MUSIC_SMOOTH;
+        if (Math.abs(next - current) > 0.001) this.music.setRate(next);
       }
     }
 
@@ -444,7 +449,6 @@
       this.deathFall = true;
       this.player.setVelocity(0, 900);
 
-      // stop music (also handled in showGameOverOverlay, but safe here too)
       if (this.music && this.music.isPlaying) this.music.stop();
 
       this.showGameOverOverlay();
