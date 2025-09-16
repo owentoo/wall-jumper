@@ -8,7 +8,7 @@
     :root { color-scheme: dark; }
     html, body {
       margin: 0; padding: 0; height: 100%;
-      background: #101317; color: #fff; /* updated earlier */
+      background: #101317; color: #fff; /* updated */
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
       overflow: hidden;
     }
@@ -80,10 +80,10 @@
   const WORLD_H       = 100000;
   const FALL_MIN      = 300, FALL_MAX = 520, FALL_ACCEL = 6.0;
 
-  // Faster cross jump (↑ from your previous values)
-  const PUSH_V        = 980;    // was 760
-  const BOOST_V       = 1450;   // was 1100
-  const BOOST_MS      = 60;     // was 70 (snappier takeoff)
+  // Faster cross jump
+  const PUSH_V        = 980;     // was 760
+  const BOOST_V       = 1450;    // was 1100
+  const BOOST_MS      = 60;      // was 70
 
   // Shared pixel scale for both character and walls
   const PIXEL_SCALE   = 2;
@@ -95,6 +95,10 @@
   // Spike (source 24x12 → display scaled by PIXEL_SCALE)
   const OB_SRC_W = 24, OB_SRC_H = 12;
   const OB_DISP_W = OB_SRC_W * PIXEL_SCALE, OB_DISP_H = OB_SRC_H * PIXEL_SCALE;
+
+  // How many SOURCE pixels to sink the spike into the wall (kills any visual gap)
+  const SPIKE_INSET_SRC = 2; // try 2–3 if you still see a sliver
+  const SPIKE_INSET = SPIKE_INSET_SRC * PIXEL_SCALE;
 
   class Main extends Phaser.Scene {
     constructor(){ super('main'); }
@@ -111,12 +115,13 @@
       this.load.spritesheet('ninja', 'ninja_sheet.png', { frameWidth: 24, frameHeight: 34 });
       this.load.image('wallTile', 'wall.png');
 
-      // REPLACED: red block → spike image from your repo
-      this.load.image('obstacle', 'spike.png'); // ← adjust path if it's in a subfolder
+      // Use your GitHub spike asset
+      this.load.image('obstacle', 'spike.png'); // update path if needed
 
-      // tiny fallback if spike is missing
+      // fallback if asset missing (keeps file running)
       const g = this.make.graphics({add:false});
-      g.fillStyle(0xff4d4d,1); g.fillRect(0,0,OB_SRC_W,OB_SRC_H); g.generateTexture('obstacle_fallback',OB_SRC_W,OB_SRC_H); g.destroy();
+      g.fillStyle(0xff4d4d,1); g.fillRect(0,0,OB_SRC_W,OB_SRC_H);
+      g.generateTexture('obstacle_fallback',OB_SRC_W,OB_SRC_H); g.destroy();
     }
 
     create(){
@@ -171,7 +176,7 @@
       this.subText   = this.add.text(this.W/2, this.H-34, 'Tap to start', {fontSize:'16px', color:'#9aa3b2'})
         .setOrigin(0.5).setScrollFactor(0).setDepth(10);
 
-      // Obstacles group
+      // Obstacles
       this.obstacles = this.physics.add.group({ allowGravity:false, immovable:true });
       this.physics.add.overlap(this.player, this.obstacles, () => { if(this.playing) this.gameOver(); }, null, this);
 
@@ -242,7 +247,7 @@
       this.playSlide();
     }
 
-    // Overlays (unchanged)
+    // Overlays
     showStartOverlay(){
       this.hideGameOverOverlay();
       if (this.overlayStart) this.overlayStart.destroy();
@@ -268,6 +273,7 @@
     }
     hideStartOverlay(){ if (this.overlayStart){ this.overlayStart.destroy(); this.overlayStart = null; } }
     hideGameOverOverlay(){ if (this.overlayGameOver){ this.overlayGameOver.destroy(); this.overlayGameOver = null; } }
+
     showGameOverOverlay(){
       this.hideStartOverlay();
       if (this.overlayGameOver) this.overlayGameOver.destroy();
@@ -284,6 +290,7 @@
       this.input.once('pointerdown', () => this.restart(), this);
     }
 
+    // Flow
     startGame(){
       this.hideStartOverlay();
       if (this.colLeft)  this.colLeft.active = true;
@@ -314,7 +321,7 @@
 
     restart(){ this.hideGameOverOverlay(); this.startGame(); }
 
-    // Faster cross jump now
+    // Faster cross jump
     jump(){
       if (!this.playing) return;
       if (!this.alive){ this.restart(); return; }
@@ -338,7 +345,7 @@
       return { min, max };
     }
 
-    // Spawn spikes that stick to wall inner edge, at same DPI
+    // Spawn spikes that STICK to wall inner edge, left side flipped, inset to kill gaps
     spawnAhead(){
       if (!this.playing || !this.alive) return;
       const bufferAhead = 1000;
@@ -346,6 +353,7 @@
       const { min:curMin, max:curMax } = this.getCurrentSpacing();
 
       while (this.nextSpawnY < camY + bufferAhead) {
+        // Alternate sides, with some repeats
         let side = (Math.random() < 0.8) ? ((this.lastSide === 'left') ? 'right' : 'left') : this.lastSide;
 
         const y = Math.max(this.nextSpawnY, this.lastY + Phaser.Math.Between(curMin|0, curMax|0));
@@ -354,14 +362,19 @@
         const ob = this.obstacles.create(0, y, texKey).setDepth(1);
         ob.setScale(PIXEL_SCALE);
 
-        // Tight hitbox to 24x12 @ display DPI; trim 1px for fairness against angled spike tips
-        ob.body.setSize(OB_DISP_W - 2, OB_DISP_H - 2, true);
+        // Tight hitbox at display DPI (trim a smidge horizontally for fairness)
+        ob.body.setSize(OB_DISP_W - 2, OB_DISP_H, true);
 
+        // Flip left spikes
         ob.setData('side', side);
+        ob.setFlipX(side === 'left');
 
+        // Snap flush to inner wall edge with an inward inset
         const edge = this.innerEdgeX(side);
         const half = OB_DISP_W * 0.5;
-        ob.x = (side === 'left') ? Math.round(edge + half) : Math.round(edge - half);
+        const targetX = (side === 'left') ? Math.round(edge + half - SPIKE_INSET)
+                                          : Math.round(edge - half + SPIKE_INSET);
+        ob.x = targetX;
 
         ob.body.allowGravity = false;
         ob.setImmovable(true);
@@ -373,6 +386,7 @@
         if (Math.random() < 0.12) this.nextSpawnY += Phaser.Math.Between(40, 80);
       }
 
+      // Cull above camera
       const topCull = this.cameras.main.scrollY - 200;
       this.obstacles.children.each(o => { if (o.active && o.y < topCull) o.destroy(); }, this);
     }
@@ -391,14 +405,16 @@
       }
       if (this.playing && this.alive && this.player.y > WORLD_H - 200){ this.gameOver(); }
 
-      // Keep obstacles glued to wall (safety)
+      // Keep spikes glued to their wall & inset each frame (safety against float error)
       this.obstacles.children.iterate(ob => {
         if (!ob || !ob.active) return;
         const side = ob.getData('side');
         const edge = this.innerEdgeX(side);
         const half = OB_DISP_W * 0.5;
-        const targetX = (side === 'left') ? (edge + half) : (edge - half);
+        const targetX = (side === 'left') ? Math.round(edge + half - SPIKE_INSET)
+                                          : Math.round(edge - half + SPIKE_INSET);
         if (ob.x !== targetX) { ob.x = targetX; ob.body.updateFromGameObject(); }
+        ob.setFlipX(side === 'left');
         ob.setVelocityX(0);
       });
     }
