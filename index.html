@@ -95,18 +95,13 @@
   // Spikes (24x12 source → display scaled by PIXEL_SCALE)
   const OB_SRC_W = 24, OB_SRC_H = 12;
   const OB_DISP_W = OB_SRC_W * PIXEL_SCALE, OB_DISP_H = OB_SRC_H * PIXEL_SCALE;
-
-  // Slightly push geometry into walls to remove any seam
-  const SPIKE_INSET_SRC = 3;                           // was 2
-  const SPIKE_INSET = SPIKE_INSET_SRC * PIXEL_SCALE;   // 6 px at scale=2
-  const CLING_INSET_SRC = 1;                           // pull player 1 src px into wall
-  const CLING_INSET = CLING_INSET_SRC * PIXEL_SCALE;   // 2 px at scale=2
+  const SPIKE_INSET_SRC = 2, SPIKE_INSET = SPIKE_INSET_SRC * PIXEL_SCALE; // sink into wall to kill gaps
 
   // AUDIO mapping & smoothing (tempo follows speed gently)
   const MUSIC_RATE_MIN = 1.00;
-  const MUSIC_RATE_MAX = 1.12;
-  const MUSIC_VOLUME   = 0.60;
-  const MUSIC_SMOOTH   = 0.06;
+  const MUSIC_RATE_MAX = 1.12; // gentle top-end so it matches gameplay feel
+  const MUSIC_VOLUME   = 0.60; // base music volume
+  const MUSIC_SMOOTH   = 0.06; // 0..1, higher = quicker rate changes
 
   class Main extends Phaser.Scene {
     constructor(){ super('main'); }
@@ -114,8 +109,8 @@
     get H(){ return this.scale.height; }
     get WALL_GAP(){ return Math.max(120, Math.min(this.W * 0.75, this.W - 60)); }
     get WALL_X(){
-      const left  = Math.round((this.W - this.WALL_GAP)/2);
-      const right = Math.round((this.W + this.WALL_GAP)/2);
+      const left  = (this.W - this.WALL_GAP)/2;
+      const right = (this.W + this.WALL_GAP)/2;
       return { left, right };
     }
 
@@ -136,10 +131,6 @@
     }
 
     create(){
-      // Ensure NEAREST filtering (extra insurance against anti-aliasing)
-      const setNearest = (key) => { if (this.textures.exists(key)) this.textures.get(key).setFilter(Phaser.Textures.FilterMode.NEAREST); };
-      setNearest('ninja'); setNearest('wallTile'); setNearest('obstacle'); setNearest('obstacle_fallback');
-
       // Animations
       this.anims.create({ key:'slide', frames: this.anims.generateFrameNumbers('ninja', { start:0,  end:11 }), frameRate:18, repeat:-1 });
       this.anims.create({ key:'jump',  frames: this.anims.generateFrameNumbers('ninja', { start:12, end:15 }), frameRate:18, repeat:0  });
@@ -148,10 +139,10 @@
       // Physics world
       this.physics.world.setBounds(0, 0, this.W, WORLD_H);
 
-      // Visual walls (rounded integer placement)
-      this.leftWallVis  = this.add.tileSprite(Math.round(this.WALL_X.left),  Math.round(WORLD_H/2), WALL_DISP_W, WORLD_H, 'wallTile')
+      // Visual walls
+      this.leftWallVis  = this.add.tileSprite(this.WALL_X.left,  WORLD_H/2, WALL_DISP_W, WORLD_H, 'wallTile')
         .setOrigin(0.5, 0.5).setDepth(0).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
-      this.rightWallVis = this.add.tileSprite(Math.round(this.WALL_X.right), Math.round(WORLD_H/2), WALL_DISP_W, WORLD_H, 'wallTile')
+      this.rightWallVis = this.add.tileSprite(this.WALL_X.right, WORLD_H/2, WALL_DISP_W, WORLD_H, 'wallTile')
         .setOrigin(0.5, 0.5).setDepth(0).setFlipX(true).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
 
       // Physics rails
@@ -163,7 +154,7 @@
 
       // Player
       this.startY = Math.min(700, Math.max(420, this.H * 0.75));
-      this.player = this.physics.add.sprite(Math.round(this.W/2), Math.round(this.startY), 'ninja', 0).setDepth(2);
+      this.player = this.physics.add.sprite(this.W/2, this.startY, 'ninja', 0).setDepth(2);
       this.player.setScale(PIXEL_SCALE);
       this.player.body.setSize(20, 30, true);
       this.player.body.setOffset((24-20)/2, (34-30)/2);
@@ -196,7 +187,7 @@
       this.physics.add.overlap(this.player, this.obstacles, () => { if(this.playing) this.gameOver(); }, null, this);
 
       // Helpers
-      this.updateFacing = () => this.player.setFlipX(this.side === 'right'));
+      this.updateFacing = () => this.player.setFlipX(this.side === 'right');
       this.playSlide  = () => this.player.anims.play('slide', true);
       this.playJump   = () => this.player.anims.play('jump',  true);
 
@@ -212,13 +203,14 @@
       this.jumpSfx = this.sound.add('jumpSfx', { volume: 0 });
       this.landSfx = this.sound.add('landSfx', { volume: 0 });
 
-      // Centralized volume: SFX = music * 0.64 (20% quieter than before)
+      // Centralized volume application (SFX always 80% of music)
       this.applyAudioSettings = () => {
         const musicVol = this.musicMuted ? 0 : this.musicBaseVolume;
-        const sfxVol   = this.sfxMuted   ? 0 : (this.musicBaseVolume * 0.64);
+        const sfxVol   = this.sfxMuted   ? 0 : (this.musicBaseVolume * 0.8); // 80% rule
         if (this.music)   this.music.setVolume(musicVol);
         if (this.jumpSfx) this.jumpSfx.setVolume(sfxVol);
         if (this.landSfx) this.landSfx.setVolume(sfxVol);
+        // persist
         try {
           localStorage.setItem('wj_audio', JSON.stringify({
             musicBaseVolume: this.musicBaseVolume,
@@ -241,6 +233,7 @@
           this.updateFacing();
           this.player.anims.play('land', true);
 
+          // land SFX (uses centralized volume)
           this.landSfx.play();
 
           this.time.delayedCall(80, () => { if (this.onWall && this.alive) this.playSlide(); });
@@ -277,7 +270,7 @@
     // --- Wall geometry helpers ---
     innerEdgeX(which){
       const rail = (which === 'left') ? this.leftRail : this.rightRail;
-      return Math.round(rail.x + ((which === 'left') ? rail.body.halfWidth : -rail.body.halfWidth));
+      return rail.x + ((which === 'left') ? rail.body.halfWidth : -rail.body.halfWidth);
     }
     playerHalfWidth(){ return this.player?.body ? this.player.body.halfWidth : (this.player.displayWidth * 0.5); }
 
@@ -287,13 +280,10 @@
 
       const edge  = this.innerEdgeX(which);
       const pHalf = this.playerHalfWidth();
-
-      // Pull slightly into the wall to eliminate any visible gap
-      const inset = CLING_INSET;
-      let x = (which === 'left') ? (edge + pHalf - inset) : (edge - pHalf + inset);
+      let x = (which === 'left') ? (edge + pHalf) : (edge - pHalf);
       x = Math.round(x);
 
-      if (yOverride !== null) this.player.setY(Math.round(yOverride));
+      if (yOverride !== null) this.player.setY(yOverride);
       this.player.setX(x);
       this.player.setVelocity(0, this.fallSpeed);
 
@@ -304,7 +294,7 @@
     // ------- UI helpers (Start overlay toggles) -------
     makeToggleButton(opts){
       const { x, y, label, getOn, onToggle } = opts;
-      const group = this.add.container(Math.round(x), Math.round(y)).setScrollFactor(0).setDepth(1001);
+      const group = this.add.container(x, y).setScrollFactor(0).setDepth(1001);
       const bg = this.add.rectangle(0, 0, 180, 40, 0x1c222b, 0.9).setOrigin(0.5).setStrokeStyle(2, 0x344053);
       const txt = this.add.text(0, 0, '', { fontSize:'16px', color:'#e5eefc' }).setOrigin(0.5);
       const refresh = () => {
@@ -358,7 +348,7 @@
 
       this.overlayStart.add([dim,title,instr, musicToggle.group, sfxToggle.group]);
 
-      // Tap to start → starts music and run
+      // Tap to start → starts music and run (works on mobile policies)
       this.input.once('pointerdown', () => this.startGame(), this);
     }
     hideStartOverlay(){ if (this.overlayStart){ this.overlayStart.destroy(); this.overlayStart = null; } }
@@ -370,6 +360,7 @@
 
       this.playing = false; this.spawnTimer.paused = true;
 
+      // stop music on game over
       if (this.music && this.music.isPlaying) this.music.stop();
 
       this.overlayGameOver = this.add.container(0,0).setScrollFactor(0).setDepth(1000);
@@ -388,11 +379,12 @@
       if (this.colLeft)  this.colLeft.active = true;
       if (this.colRight) this.colRight.active = true;
 
+      // Music ALWAYS restarts at beginning of a run
       if (this.music){
         if (this.music.isPlaying) this.music.stop();
         this.music.setRate(MUSIC_RATE_MIN);
-        this.applyAudioSettings();
-        this.music.play();
+        this.applyAudioSettings(); // ensure current mute/volumes
+        this.music.play(); // triggered from pointerdown path
       }
 
       this.score = 0; this.scoreText.setText('0');
@@ -420,7 +412,7 @@
 
     restart(){ this.hideGameOverOverlay(); this.startGame(); }
 
-    // Jump
+    // Jump (plays jump SFX)
     jump(){
       if (!this.playing) return;
       if (!this.alive){ this.restart(); return; }
@@ -432,6 +424,8 @@
       this.subText.setVisible(false);
 
       this.playJump();
+
+      // jump SFX (uses centralized volume)
       this.jumpSfx.play();
 
       this.time.delayedCall(BOOST_MS, () => {
@@ -446,7 +440,7 @@
       return { min, max };
     }
 
-    // Spawn spikes: stick to wall, slight inset, integer placement
+    // Spawn spikes: stick to wall, flip left, inset
     spawnAhead(){
       if (!this.playing || !this.alive) return;
       const bufferAhead = 1000;
@@ -458,16 +452,15 @@
         const y = Math.max(this.nextSpawnY, this.lastY + Phaser.Math.Between(curMin|0, curMax|0));
 
         const texKey = this.textures.exists('obstacle') ? 'obstacle' : 'obstacle_fallback';
-        const ob = this.obstacles.create(0, Math.round(y), texKey).setDepth(1);
+        const ob = this.obstacles.create(0, y, texKey).setDepth(1);
         ob.setScale(PIXEL_SCALE);
-        ob.body.setSize(OB_DISP_W - 2, OB_DISP_H, true); // keep gameplay fairness
+        ob.body.setSize(OB_DISP_W - 2, OB_DISP_H, true); // slight trim for fairness
 
         ob.setData('side', side);
-        ob.setFlipX(side === 'left');
+        ob.setFlipX(side === 'left'); // flip left spikes
 
         const edge = this.innerEdgeX(side);
         const half = OB_DISP_W * 0.5;
-        // push into wall (no seam), force integer
         const targetX = (side === 'left') ? Math.round(edge + half - SPIKE_INSET)
                                           : Math.round(edge - half + SPIKE_INSET);
         ob.x = targetX;
@@ -517,7 +510,7 @@
       // AUDIO: ramp music tempo with fall speed (eased + smoothed)
       if (this.music && this.music.isPlaying) {
         const t = Phaser.Math.Clamp((this.fallSpeed - FALL_MIN)/(FALL_MAX - FALL_MIN), 0, 1);
-        const eased = Phaser.Math.Easing.Quadratic.Out(t);
+        const eased = Phaser.Math.Easing.Quadratic.Out(t); // gentle curve to feel natural
         const desired = Phaser.Math.Linear(MUSIC_RATE_MIN, MUSIC_RATE_MAX, eased);
         const current = this.music.rate;
         const next = current + (desired - current) * MUSIC_SMOOTH;
