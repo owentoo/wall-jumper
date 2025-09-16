@@ -76,14 +76,20 @@
 
 <script>
 (() => {
-  const WORLD_H      = 100000;
-  const FALL_MIN     = 300, FALL_MAX = 520, FALL_ACCEL = 6.0;
-  const PUSH_V       = 640, BOOST_V = 820, BOOST_MS = 120;
-  const SHAKE_JUMP_D = 60,  SHAKE_LAND_D = 70,  SHAKE_JUMP_I = 0.0018, SHAKE_LAND_I = 0.0016;
+  // ------- Tunables -------
+  const WORLD_H       = 100000;
+  const FALL_MIN      = 300, FALL_MAX = 520, FALL_ACCEL = 6.0;
+  const PUSH_V        = 640, BOOST_V = 820, BOOST_MS = 120;
+  const SHAKE_JUMP_D  = 60,  SHAKE_LAND_D = 70,  SHAKE_JUMP_I = 0.0018, SHAKE_LAND_I = 0.0016;
 
-  // Visual wall constants
-  const WALL_VIS_W = 26;   // art width (px)
-  const WALL_TILE_H = 256; // tile source height (px)
+  // Shared pixel scale for *both* the character and wall art (keeps pixels identical)
+  const PIXEL_SCALE   = 2;
+
+  // Wall art (source)
+  const WALL_SRC_W    = 26;   // sprite pixel width
+  const WALL_SRC_H    = 256;  // sprite pixel height (for reference)
+  // Displayed wall width after scaling (physics body matches this)
+  const WALL_DISP_W   = WALL_SRC_W * PIXEL_SCALE;
 
   class Main extends Phaser.Scene {
     constructor(){ super('main'); }
@@ -97,10 +103,10 @@
     }
 
     preload(){
-      // Sprite sheet (24×34 per frame): slide 1–12, jump 13–16, land 17
+      // Ninja sprite sheet: frames 24x34 (w x h)
       this.load.spritesheet('ninja', 'ninja_sheet.png', { frameWidth: 24, frameHeight: 34 });
 
-      // Wall tile image (LEFT wall art; we'll flip for right)
+      // Wall tile (left wall art; right wall is flipped)
       this.load.image('wallTile', 'wall.png');
 
       // Simple obstacle texture
@@ -108,7 +114,7 @@
     }
 
     create(){
-      // Animations
+      // --- Animations (1-indexed → 0-indexed) ---
       this.anims.create({ key:'slide', frames: this.anims.generateFrameNumbers('ninja', { start:0,  end:11 }), frameRate:18, repeat:-1 });
       this.anims.create({ key:'jump',  frames: this.anims.generateFrameNumbers('ninja', { start:12, end:15 }), frameRate:18, repeat:0  });
       this.anims.create({ key:'land',  frames: [{ key:'ninja', frame:16 }], frameRate:1, repeat:0 });
@@ -117,25 +123,33 @@
       this.physics.world.setBounds(0, 0, this.W, WORLD_H);
 
       // --- Visual walls (tileSprite) ---
-      this.leftWallVis  = this.add.tileSprite(this.WALL_X.left,  WORLD_H/2, WALL_VIS_W, WORLD_H, 'wallTile')
-        .setOrigin(0.5, 0.5).setDepth(0);
-      this.rightWallVis = this.add.tileSprite(this.WALL_X.right, WORLD_H/2, WALL_VIS_W, WORLD_H, 'wallTile')
-        .setOrigin(0.5, 0.5).setFlipX(true).setDepth(0);
+      // We keep wall pixels identical to the character by using:
+      //   - display width = WALL_DISP_W (26 * PIXEL_SCALE)
+      //   - tile scale = PIXEL_SCALE (nearest-neighbor)
+      this.leftWallVis  = this.add.tileSprite(this.WALL_X.left,  WORLD_H/2, WALL_DISP_W, WORLD_H, 'wallTile')
+        .setOrigin(0.5, 0.5)
+        .setDepth(0)
+        .setTileScale(PIXEL_SCALE, PIXEL_SCALE);  // keep pixel density
+      this.rightWallVis = this.add.tileSprite(this.WALL_X.right, WORLD_H/2, WALL_DISP_W, WORLD_H, 'wallTile')
+        .setOrigin(0.5, 0.5)
+        .setDepth(0)
+        .setFlipX(true)
+        .setTileScale(PIXEL_SCALE, PIXEL_SCALE);
 
-      // --- Physics rails (hidden) matching wall width ---
-      // Use a generated 1×1 pixel texture stretched; set alpha to 0 so only the tile visuals show.
+      // --- Physics rails (invisible) that match visual width exactly ---
       this.add.graphics().generateTexture('rail1x1', 1, 1);
       this.leftRail  = this.physics.add.staticImage(this.WALL_X.left,  WORLD_H/2, 'rail1x1').setAlpha(0);
       this.rightRail = this.physics.add.staticImage(this.WALL_X.right, WORLD_H/2, 'rail1x1').setAlpha(0);
-      this.leftRail.setDisplaySize(WALL_VIS_W, WORLD_H).refreshBody();
-      this.rightRail.setDisplaySize(WALL_VIS_W, WORLD_H).refreshBody();
+      this.leftRail.setDisplaySize(WALL_DISP_W, WORLD_H).refreshBody();
+      this.rightRail.setDisplaySize(WALL_DISP_W, WORLD_H).refreshBody();
 
-      // Player
+      // --- Player ---
       this.startY = Math.min(700, Math.max(420, this.H * 0.75));
-      this.player = this.physics.add.sprite(this.WALL_X.left + 2, this.startY, 'ninja', 0).setDepth(2);
-      this.player.setScale(2);
-      this.player.body.setSize(20, 30, true);
-      this.player.body.setOffset((24 - 20)/2, (34 - 30)/2);
+      // Spawn centered, then snap to wall to avoid any initial overlap
+      this.player = this.physics.add.sprite(this.W/2, this.startY, 'ninja', 0).setDepth(2);
+      this.player.setScale(PIXEL_SCALE);                   // same pixel scale as walls
+      this.player.body.setSize(20, 30, true);              // physics body inside 24×34
+      this.player.body.setOffset((24-20)/2, (34-30)/2);
 
       // State
       this.physics.world.gravity.y = 0;
@@ -152,20 +166,22 @@
       this.cam.setBounds(0,0,this.W,WORLD_H);
       this.cam.startFollow(this.player, true, 1, 1);
       this.cam.setBackgroundColor('#0d0f14');
-      this.cam.setRoundPixels(true);
+      this.cam.setRoundPixels(true); // keeps pixel-aligned drawing
 
       // HUD
-      this.scoreText = this.add.text(this.W/2, 50, '0', {fontSize:'48px', fontStyle:'800', color:'#fff'}).setOrigin(0.5).setScrollFactor(0).setDepth(10);
-      this.subText   = this.add.text(this.W/2, this.H-34, 'Tap to start', {fontSize:'16px', color:'#9aa3b2'}).setOrigin(0.5).setScrollFactor(0).setDepth(10);
+      this.scoreText = this.add.text(this.W/2, 50, '0', {fontSize:'48px', fontStyle:'800', color:'#fff'})
+        .setOrigin(0.5).setScrollFactor(0).setDepth(10);
+      this.subText   = this.add.text(this.W/2, this.H-34, 'Tap to start', {fontSize:'16px', color:'#9aa3b2'})
+        .setOrigin(0.5).setScrollFactor(0).setDepth(10);
 
       // Obstacles
       this.obstacles = this.physics.add.group();
       this.physics.add.overlap(this.player, this.obstacles, () => { if(this.playing) this.gameOver(); }, null, this);
 
       // Helpers
-      this.updateFacing = () => this.player.setFlipX(this.side === 'right'); // assumes frames face RIGHT
+      this.updateFacing = () => this.player.setFlipX(this.side === 'right'); // frames face RIGHT by default
       this.playSlide  = () => this.player.anims.play('slide', true);
-      this.playJump   = () => this.player.anims.play('jump', true);
+      this.playJump   = () => this.player.anims.play('jump',  true);
 
       // Rail contact handler (land)
       const contact = (_player, rail) => {
@@ -198,24 +214,50 @@
       this.lastY = this.startY;
       this.spawnTimer = this.time.addEvent({ delay: 60, loop: true, paused: true, callback: () => this.spawnAhead() });
 
-      // Start overlay
+      // Start overlay & correct initial placement
       this.showStartOverlay();
       this.snapToWall('left');
 
+      // Handle resizes
       this.scale.on('resize', (gameSize) => this.onResize(gameSize));
     }
 
-    // Simple texture helper
+    // ----- Utility drawing -----
     makeRect(key,w,h,color){ const g=this.make.graphics({add:false}); g.fillStyle(color,1); g.fillRoundedRect(0,0,w,h,4); g.generateTexture(key,w,h); g.destroy(); }
 
-    // Overlays
+    // ----- Exact wall placement helpers (no clipping) -----
+    innerEdgeX(which){
+      const rail = (which === 'left') ? this.leftRail : this.rightRail;
+      return rail.x + ((which === 'left') ? rail.body.halfWidth : -rail.body.halfWidth);
+    }
+    playerHalfWidth(){ return this.player?.body ? this.player.body.halfWidth : (this.player.displayWidth * 0.5); }
+
+    snapToWall(which, yOverride = null){
+      this.onWall = true;
+      this.side = which;
+
+      const edge  = this.innerEdgeX(which);
+      const pHalf = this.playerHalfWidth();
+      const pad   = 1; // tiny visual gap
+
+      const x = (which === 'left') ? (edge + pHalf + pad) : (edge - pHalf - pad);
+
+      if (yOverride !== null) this.player.setY(yOverride);
+      this.player.setX(x);
+      this.player.setVelocity(0, this.fallSpeed);
+
+      this.updateFacing();
+      this.playSlide();
+    }
+
+    // ----- UI overlays -----
     showStartOverlay(){
       this.hideGameOverOverlay();
       if (this.overlayStart) this.overlayStart.destroy();
+
       this.playing = false; this.alive = true; this.deathFall = false;
       this.fallSpeed = FALL_MIN;
       this.obstacles.clear(true,true);
-      this.snapToWall('left', this.startY);
       this.spawnTimer.paused = true;
 
       this.cam.stopFollow(); this.cam.setBounds(0,0,this.W,WORLD_H);
@@ -238,8 +280,8 @@
     showGameOverOverlay(){
       this.hideStartOverlay();
       if (this.overlayGameOver) this.overlayGameOver.destroy();
-      this.playing = false;
-      this.spawnTimer.paused = true;
+
+      this.playing = false; this.spawnTimer.paused = true;
 
       this.overlayGameOver = this.add.container(0,0).setScrollFactor(0).setDepth(1000);
       const dim = this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({ useHandCursor:true });
@@ -251,7 +293,7 @@
       this.input.once('pointerdown', () => this.restart(), this);
     }
 
-    // Flow
+    // ----- Flow -----
     startGame(){
       this.hideStartOverlay();
       if (this.colLeft)  this.colLeft.active = true;
@@ -281,16 +323,6 @@
     }
 
     restart(){ this.hideGameOverOverlay(); this.startGame(); }
-
-    snapToWall(which, yOverride=null){
-      this.onWall = true; this.side = which;
-      const x = (which==='left') ? (this.WALL_X.left + 2) : (this.WALL_X.right - 2);
-      if (yOverride !== null) this.player.setY(yOverride);
-      this.player.setX(x);
-      this.player.setVelocity(0, this.fallSpeed);
-      this.updateFacing();
-      this.playSlide();
-    }
 
     bumpCamera(kind){
       const dur  = (kind==='jump') ? SHAKE_JUMP_D : SHAKE_LAND_D;
@@ -332,9 +364,10 @@
         let side = (Math.random() < 0.8) ? ((this.lastSide === 'left') ? 'right' : 'left') : this.lastSide;
         const railX = (side==='left') ? this.WALL_X.left : this.WALL_X.right;
 
-        // inward clearance from wall; tuned for 26px wall width
+        // inward clearance from the inner wall face, tuned for WALL_DISP_W
         const inward = Phaser.Math.Between(20, 38);
-        const x = (side==='left') ? (railX + inward + WALL_VIS_W/2) : (railX - inward - WALL_VIS_W/2);
+        const x = (side==='left') ? (railX + inward + WALL_DISP_W/2)
+                                  : (railX - inward - WALL_DISP_W/2);
 
         const gap = Phaser.Math.Between(curMin|0, curMax|0);
         const y = Math.max(this.nextSpawnY, this.lastY + gap);
@@ -383,26 +416,22 @@
     }
 
     onResize(gameSize){
-      // Update world/camera width
+      // Update world/camera
       this.physics.world.setBounds(0, 0, gameSize.width, WORLD_H);
       this.cam.setBounds(0, 0, gameSize.width, WORLD_H);
 
-      // Rail positions & bodies
-      this.leftRail.setPosition(this.WALL_X.left,  WORLD_H/2).setDisplaySize(WALL_VIS_W, WORLD_H).refreshBody();
-      this.rightRail.setPosition(this.WALL_X.right, WORLD_H/2).setDisplaySize(WALL_VIS_W, WORLD_H).refreshBody();
+      // Move rails & resize bodies
+      this.leftRail.setPosition(this.WALL_X.left,  WORLD_H/2).setDisplaySize(WALL_DISP_W, WORLD_H).refreshBody();
+      this.rightRail.setPosition(this.WALL_X.right, WORLD_H/2).setDisplaySize(WALL_DISP_W, WORLD_H).refreshBody();
 
-      // Visual walls follow the rails
-      this.leftWallVis.setPosition(this.WALL_X.left,  WORLD_H/2).setSize(WALL_VIS_W, WORLD_H);
-      this.rightWallVis.setPosition(this.WALL_X.right, WORLD_H/2).setSize(WALL_VIS_W, WORLD_H);
+      // Visual walls follow & keep tile scale
+      this.leftWallVis.setPosition(this.WALL_X.left, WORLD_H/2).setSize(WALL_DISP_W, WORLD_H).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
+      this.rightWallVis.setPosition(this.WALL_X.right, WORLD_H/2).setSize(WALL_DISP_W, WORLD_H).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
 
-      // Keep player snapped if on a wall
       if (this.onWall) this.snapToWall(this.side);
 
-      // HUD positions
       this.scoreText.setPosition(this.W/2, 50);
       this.subText.setPosition(this.W/2, this.H - 34);
-
-      // Rebuild overlays to match new size (optional – keeping simple here)
     }
   }
 
