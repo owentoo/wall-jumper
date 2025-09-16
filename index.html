@@ -187,9 +187,10 @@
       this.physics.add.overlap(this.player, this.obstacles, () => { if(this.playing) this.gameOver(); }, null, this);
 
       // Helpers
-      this.updateFacing = () => this.player.setFlipX(this.side === 'right');
-      this.playSlide  = () => this.player.anims.play('slide', true);
-      this.playJump   = () => this.player.anims.play('jump',  true);
+      this.music = this.sound.add('bgm', { loop: true, volume: 1.0 });
+      this.jumpSfx = this.sound.add('jumpSfx', { volume: 0.6 });
+      this.landSfx = this.sound.add('landSfx', { volume: 0.6 });
+
 
       // Audio objects (music created now, started in startGame)
       this.music = this.sound.add('bgm', { loop: true, volume: MUSIC_VOLUME, rate: MUSIC_RATE_MIN });
