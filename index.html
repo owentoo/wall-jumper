@@ -7,38 +7,25 @@
   <style>
     :root { color-scheme: dark; }
     html, body {
-      margin: 0;
-      padding: 0;
-      height: 100%;
-      background: #0d0f14;
-      color: #fff;
+      margin: 0; padding: 0; height: 100%;
+      background: #0d0f14; color: #fff;
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
       overflow: hidden;
     }
     .shell {
-      position: fixed;
-      inset: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
       padding-left: env(safe-area-inset-left);
       padding-right: env(safe-area-inset-right);
       padding-top: env(safe-area-inset-top);
       padding-bottom: env(safe-area-inset-bottom);
     }
     .stage {
-      width: min(100vw, 600px);
-      height: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      width: min(100vw, 600px); height: 100%;
+      display: flex; align-items: center; justify-content: center;
     }
     #game-root canvas {
-      display: block;
-      width: 100%;
-      height: 100%;
-      image-rendering: pixelated;
-      image-rendering: crisp-edges;
+      display:block; width:100%; height:100%;
+      image-rendering: pixelated; image-rendering: crisp-edges;
       touch-action: manipulation;
     }
   </style>
@@ -48,11 +35,7 @@
       const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
       function getViewportHeightPx(){
         const vv = window.visualViewport;
-        const cands = [
-          vv && vv.height,
-          window.innerHeight,
-          document.documentElement && document.documentElement.clientHeight
-        ].filter(Boolean);
+        const cands = [ vv && vv.height, window.innerHeight, document.documentElement && document.documentElement.clientHeight ].filter(Boolean);
         return Math.max(1, Math.round(Math.max.apply(null, cands)));
       }
       function sizeStage(){
@@ -61,19 +44,10 @@
         if (!shell || !stage) return;
         if (isMobile) {
           const h = getViewportHeightPx();
-          shell.style.height = h + 'px';
-          shell.style.minHeight = h + 'px';
-          shell.style.maxHeight = h + 'px';
-          stage.style.height = h + 'px';
-          stage.style.minHeight = h + 'px';
-          stage.style.maxHeight = h + 'px';
+          for (const el of [shell, stage]) { el.style.height = h+'px'; el.style.minHeight = h+'px'; el.style.maxHeight = h+'px'; }
         } else {
-          shell.style.height = '100vh';
-          shell.style.minHeight = '100vh';
-          shell.style.maxHeight = '100vh';
-          stage.style.height = '100%';
-          stage.style.minHeight = '100%';
-          stage.style.maxHeight = '100%';
+          shell.style.height = '100vh'; shell.style.minHeight = '100vh'; shell.style.maxHeight = '100vh';
+          stage.style.height = '100%'; stage.style.minHeight = '100%'; stage.style.maxHeight = '100%';
         }
         window.dispatchEvent(new Event('resize'));
       }
@@ -85,9 +59,7 @@
           window.visualViewport.addEventListener('resize', sizeStage);
           window.visualViewport.addEventListener('scroll', sizeStage);
         }
-        setTimeout(sizeStage, 50);
-        setTimeout(sizeStage, 300);
-        setTimeout(sizeStage, 900);
+        setTimeout(sizeStage, 50); setTimeout(sizeStage, 300); setTimeout(sizeStage, 900);
       }
       window.addEventListener('DOMContentLoaded', init);
     })();
@@ -109,6 +81,10 @@
   const PUSH_V       = 640, BOOST_V = 820, BOOST_MS = 120;
   const SHAKE_JUMP_D = 60,  SHAKE_LAND_D = 70,  SHAKE_JUMP_I = 0.0018, SHAKE_LAND_I = 0.0016;
 
+  // Visual wall constants
+  const WALL_VIS_W = 26;   // art width (px)
+  const WALL_TILE_H = 256; // tile source height (px)
+
   class Main extends Phaser.Scene {
     constructor(){ super('main'); }
     get W(){ return this.scale.width; }
@@ -121,41 +97,40 @@
     }
 
     preload(){
-      // Diagnostics on load
-      this.load.on('loaderror', (file) => console.error('[LOAD ERROR]', file?.key, file?.src));
-      this.load.on('filecomplete-spritesheet-ninja', (key, type, data) => console.log('[LOADED]', key, data?.src));
+      // Sprite sheet (24×34 per frame): slide 1–12, jump 13–16, land 17
+      this.load.spritesheet('ninja', 'ninja_sheet.png', { frameWidth: 24, frameHeight: 34 });
 
-      // Your sprite sheet: 24x34 per frame
-      this.load.spritesheet('ninja', 'ninja_sheet.png', {
-        frameWidth: 24,
-        frameHeight: 34
-      });
+      // Wall tile image (LEFT wall art; we'll flip for right)
+      this.load.image('wallTile', 'wall.png');
 
-      this.makeRect('rail', 10, 100, 0x1c2230);
+      // Simple obstacle texture
       this.makeRect('obHead', 46, 40, 0xff4d4d);
     }
 
     create(){
-      if (!this.textures.exists('ninja')) {
-        this.add.text(this.W/2, this.H/2, 'Sprite failed to load.\nCheck path/CORS.', {
-          fontSize: '18px', color: '#ff8080', align: 'center'
-        }).setOrigin(0.5).setScrollFactor(0);
-        return;
-      }
-
-      // Animations per your spec (1-indexed → 0-indexed)
+      // Animations
       this.anims.create({ key:'slide', frames: this.anims.generateFrameNumbers('ninja', { start:0,  end:11 }), frameRate:18, repeat:-1 });
       this.anims.create({ key:'jump',  frames: this.anims.generateFrameNumbers('ninja', { start:12, end:15 }), frameRate:18, repeat:0  });
       this.anims.create({ key:'land',  frames: [{ key:'ninja', frame:16 }], frameRate:1, repeat:0 });
 
-      // World / rails
+      // Physics world
       this.physics.world.setBounds(0, 0, this.W, WORLD_H);
-      this.leftRail  = this.physics.add.staticImage(this.WALL_X.left,  WORLD_H/2, 'rail');
-      this.rightRail = this.physics.add.staticImage(this.WALL_X.right, WORLD_H/2, 'rail');
-      this.leftRail.setDisplaySize(10, WORLD_H).refreshBody();
-      this.rightRail.setDisplaySize(10, WORLD_H).refreshBody();
 
-      // Player sprite
+      // --- Visual walls (tileSprite) ---
+      this.leftWallVis  = this.add.tileSprite(this.WALL_X.left,  WORLD_H/2, WALL_VIS_W, WORLD_H, 'wallTile')
+        .setOrigin(0.5, 0.5).setDepth(0);
+      this.rightWallVis = this.add.tileSprite(this.WALL_X.right, WORLD_H/2, WALL_VIS_W, WORLD_H, 'wallTile')
+        .setOrigin(0.5, 0.5).setFlipX(true).setDepth(0);
+
+      // --- Physics rails (hidden) matching wall width ---
+      // Use a generated 1×1 pixel texture stretched; set alpha to 0 so only the tile visuals show.
+      this.add.graphics().generateTexture('rail1x1', 1, 1);
+      this.leftRail  = this.physics.add.staticImage(this.WALL_X.left,  WORLD_H/2, 'rail1x1').setAlpha(0);
+      this.rightRail = this.physics.add.staticImage(this.WALL_X.right, WORLD_H/2, 'rail1x1').setAlpha(0);
+      this.leftRail.setDisplaySize(WALL_VIS_W, WORLD_H).refreshBody();
+      this.rightRail.setDisplaySize(WALL_VIS_W, WORLD_H).refreshBody();
+
+      // Player
       this.startY = Math.min(700, Math.max(420, this.H * 0.75));
       this.player = this.physics.add.sprite(this.WALL_X.left + 2, this.startY, 'ninja', 0).setDepth(2);
       this.player.setScale(2);
@@ -180,10 +155,8 @@
       this.cam.setRoundPixels(true);
 
       // HUD
-      this.hud = this.add.container(0,0).setScrollFactor(0).setDepth(10);
-      this.scoreText = this.add.text(this.W/2, 50, '0', {fontSize:'48px', fontStyle:'800', color:'#fff'}).setOrigin(0.5);
-      this.subText   = this.add.text(this.W/2, this.H-34, 'Tap to start', {fontSize:'16px', color:'#9aa3b2'}).setOrigin(0.5);
-      this.hud.add([this.scoreText, this.subText]);
+      this.scoreText = this.add.text(this.W/2, 50, '0', {fontSize:'48px', fontStyle:'800', color:'#fff'}).setOrigin(0.5).setScrollFactor(0).setDepth(10);
+      this.subText   = this.add.text(this.W/2, this.H-34, 'Tap to start', {fontSize:'16px', color:'#9aa3b2'}).setOrigin(0.5).setScrollFactor(0).setDepth(10);
 
       // Obstacles
       this.obstacles = this.physics.add.group();
@@ -232,7 +205,7 @@
       this.scale.on('resize', (gameSize) => this.onResize(gameSize));
     }
 
-    // Texture helpers
+    // Simple texture helper
     makeRect(key,w,h,color){ const g=this.make.graphics({add:false}); g.fillStyle(color,1); g.fillRoundedRect(0,0,w,h,4); g.generateTexture(key,w,h); g.destroy(); }
 
     // Overlays
@@ -244,15 +217,19 @@
       this.obstacles.clear(true,true);
       this.snapToWall('left', this.startY);
       this.spawnTimer.paused = true;
+
       this.cam.stopFollow(); this.cam.setBounds(0,0,this.W,WORLD_H);
       this.cam.setScroll(0, Math.max(0, this.startY - this.H*0.5));
       this.cam.startFollow(this.player, true, 1, 1);
+
       this.subText.setText('Tap to start').setVisible(true);
+
       this.overlayStart = this.add.container(0,0).setScrollFactor(0).setDepth(1000);
       const dim = this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({ useHandCursor:true });
       const title = this.add.text(this.W/2, this.H*0.32, 'WALL JUMPER', {fontSize:'40px', fontStyle:'800', color:'#ffffff'}).setOrigin(0.5);
       const instr = this.add.text(this.W/2, this.H*0.42, 'Tap anywhere to start\nScore on each wall touch\nAvoid the hazards', {fontSize:'18px', color:'#b7c0cf', align:'center'}).setOrigin(0.5);
       this.overlayStart.add([dim,title,instr]);
+
       this.input.once('pointerdown', () => this.startGame(), this);
     }
     hideStartOverlay(){ if (this.overlayStart){ this.overlayStart.destroy(); this.overlayStart = null; } }
@@ -261,13 +238,16 @@
     showGameOverOverlay(){
       this.hideStartOverlay();
       if (this.overlayGameOver) this.overlayGameOver.destroy();
-      this.playing = false; this.spawnTimer.paused = true;
+      this.playing = false;
+      this.spawnTimer.paused = true;
+
       this.overlayGameOver = this.add.container(0,0).setScrollFactor(0).setDepth(1000);
       const dim = this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({ useHandCursor:true });
       const title = this.add.text(this.W/2, this.H*0.32, 'GAME OVER', {fontSize:'40px', fontStyle:'800', color:'#ffffff'}).setOrigin(0.5);
       const stats = this.add.text(this.W/2, this.H*0.42, `Score ${this.score} • Best ${this.best}`, {fontSize:'18px', color:'#b7c0cf'}).setOrigin(0.5);
       const tip = this.add.text(this.W/2, this.H*0.47, 'Tap anywhere to restart', {fontSize:'16px', color:'#9aa3b2'}).setOrigin(0.5);
       this.overlayGameOver.add([dim,title,stats,tip]);
+
       this.input.once('pointerdown', () => this.restart(), this);
     }
 
@@ -276,20 +256,30 @@
       this.hideStartOverlay();
       if (this.colLeft)  this.colLeft.active = true;
       if (this.colRight) this.colRight.active = true;
+
       this.score = 0; this.scoreText.setText('0');
       this.subText.setText('Tap to jump').setVisible(true);
       this.fallSpeed = FALL_MIN;
       this.obstacles.clear(true,true);
       this.player.clearTint();
+
       this.snapToWall('left', this.startY);
+
       this.nextSpawnY = this.startY + 260;
       this.lastSide = 'right';
       this.lastY = this.startY;
-      this.alive = true; this.deathFall = false; this.playing = true;
-      this.cam.rotation = 0; this.cam.setBounds(0,0,this.W,WORLD_H);
+
+      this.alive = true;
+      this.deathFall = false;
+      this.playing = true;
+
+      this.cam.rotation = 0;
+      this.cam.setBounds(0,0,this.W,WORLD_H);
       this.cam.startFollow(this.player, true, 1, 1);
+
       this.spawnTimer.paused = false;
     }
+
     restart(){ this.hideGameOverOverlay(); this.startGame(); }
 
     snapToWall(which, yOverride=null){
@@ -313,10 +303,12 @@
       if (!this.alive){ this.restart(); return; }
       if (!this.onWall) return;
       this.bumpCamera('jump');
+
       const dir = (this.side==='left') ? 1 : -1;
       this.player.setVelocity(dir*BOOST_V, this.fallSpeed);
       this.onWall = false;
       this.subText.setVisible(false);
+
       // Play jump sequence (13–16)
       this.playJump();
       this.time.delayedCall(BOOST_MS, () => {
@@ -339,16 +331,22 @@
       while (this.nextSpawnY < camY + bufferAhead) {
         let side = (Math.random() < 0.8) ? ((this.lastSide === 'left') ? 'right' : 'left') : this.lastSide;
         const railX = (side==='left') ? this.WALL_X.left : this.WALL_X.right;
-        const inward = Phaser.Math.Between(24, 38);
-        const x = (side==='left') ? (railX + inward + 5) : (railX - inward - 5);
+
+        // inward clearance from wall; tuned for 26px wall width
+        const inward = Phaser.Math.Between(20, 38);
+        const x = (side==='left') ? (railX + inward + WALL_VIS_W/2) : (railX - inward - WALL_VIS_W/2);
+
         const gap = Phaser.Math.Between(curMin|0, curMax|0);
         const y = Math.max(this.nextSpawnY, this.lastY + gap);
+
         const ob = this.obstacles.create(x, y, 'obHead').setImmovable(true).setDepth(1);
         ob.body.setSize(40, 34).setOffset((46-40)/2, (40-34)/2);
         ob.setData('side', side);
+
         this.lastY = y;
         this.lastSide = side;
         this.nextSpawnY = y + gap;
+
         if (Math.random() < 0.12) this.nextSpawnY += Phaser.Math.Between(40, 80);
       }
       const topCull = this.cameras.main.scrollY - 200;
@@ -385,28 +383,26 @@
     }
 
     onResize(gameSize){
+      // Update world/camera width
       this.physics.world.setBounds(0, 0, gameSize.width, WORLD_H);
       this.cam.setBounds(0, 0, gameSize.width, WORLD_H);
-      this.leftRail.setX(this.WALL_X.left).refreshBody();
-      this.rightRail.setX(this.WALL_X.right).refreshBody();
+
+      // Rail positions & bodies
+      this.leftRail.setPosition(this.WALL_X.left,  WORLD_H/2).setDisplaySize(WALL_VIS_W, WORLD_H).refreshBody();
+      this.rightRail.setPosition(this.WALL_X.right, WORLD_H/2).setDisplaySize(WALL_VIS_W, WORLD_H).refreshBody();
+
+      // Visual walls follow the rails
+      this.leftWallVis.setPosition(this.WALL_X.left,  WORLD_H/2).setSize(WALL_VIS_W, WORLD_H);
+      this.rightWallVis.setPosition(this.WALL_X.right, WORLD_H/2).setSize(WALL_VIS_W, WORLD_H);
+
+      // Keep player snapped if on a wall
       if (this.onWall) this.snapToWall(this.side);
+
+      // HUD positions
       this.scoreText.setPosition(this.W/2, 50);
       this.subText.setPosition(this.W/2, this.H - 34);
-      if (this.overlayStart){
-        this.overlayStart.removeAll(true);
-        const dim = this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({ useHandCursor:true });
-        const title = this.add.text(this.W/2, this.H*0.32, 'WALL JUMPER', {fontSize:'40px', fontStyle:'800', color:'#ffffff'}).setOrigin(0.5);
-        const instr = this.add.text(this.W/2, this.H*0.42, 'Tap anywhere to start\nScore on each wall touch\nAvoid the hazards', {fontSize:'18px', color:'#b7c0cf', align:'center'}).setOrigin(0.5);
-        this.overlayStart.add([dim,title,instr]);
-      }
-      if (this.overlayGameOver){
-        this.overlayGameOver.removeAll(true);
-        const dim = this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({ useHandCursor:true });
-        const title = this.add.text(this.W/2, this.H*0.32, 'GAME OVER', {fontSize:'40px', fontStyle:'800', color:'#ffffff'}).setOrigin(0.5);
-        const stats = this.add.text(this.W/2, this.H*0.42, `Score ${this.score} • Best ${this.best}`, {fontSize:'18px', color:'#b7c0cf'}).setOrigin(0.5);
-        const tip = this.add.text(this.W/2, this.H*0.47, 'Tap anywhere to restart', {fontSize:'16px', color:'#9aa3b2'}).setOrigin(0.5);
-        this.overlayGameOver.add([dim,title,stats,tip]);
-      }
+
+      // Rebuild overlays to match new size (optional – keeping simple here)
     }
   }
 
