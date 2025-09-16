@@ -8,26 +8,18 @@
     :root { color-scheme: dark; }
     html, body {
       margin: 0; padding: 0; height: 100%;
-      background: #101317; color: #fff; /* updated */
+      background: #101317; color: #fff;
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
       overflow: hidden;
     }
-    .shell {
-      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    .shell { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
       padding-left: env(safe-area-inset-left);
       padding-right: env(safe-area-inset-right);
       padding-top: env(safe-area-inset-top);
       padding-bottom: env(safe-area-inset-bottom);
     }
-    .stage {
-      width: min(100vw, 600px); height: 100%;
-      display: flex; align-items: center; justify-content: center;
-    }
-    #game-root canvas {
-      display:block; width:100%; height:100%;
-      image-rendering: pixelated; image-rendering: crisp-edges;
-      touch-action: manipulation;
-    }
+    .stage { width: min(100vw, 600px); height: 100%; display: flex; align-items: center; justify-content: center; }
+    #game-root canvas { display:block; width:100%; height:100%; image-rendering: pixelated; image-rendering: crisp-edges; touch-action: manipulation; }
   </style>
 
   <script>
@@ -81,24 +73,26 @@
   const FALL_MIN      = 300, FALL_MAX = 520, FALL_ACCEL = 6.0;
 
   // Faster cross jump
-  const PUSH_V        = 980;     // was 760
-  const BOOST_V       = 1450;    // was 1100
-  const BOOST_MS      = 60;      // was 70
+  const PUSH_V        = 980;
+  const BOOST_V       = 1450;
+  const BOOST_MS      = 60;
 
-  // Shared pixel scale for both character and walls
+  // Shared pixel scale
   const PIXEL_SCALE   = 2;
 
-  // Wall art (source)
+  // Walls
   const WALL_SRC_W    = 26;
   const WALL_DISP_W   = WALL_SRC_W * PIXEL_SCALE;
 
-  // Spike (source 24x12 → display scaled by PIXEL_SCALE)
+  // Spikes (24x12 → scaled by PIXEL_SCALE)
   const OB_SRC_W = 24, OB_SRC_H = 12;
   const OB_DISP_W = OB_SRC_W * PIXEL_SCALE, OB_DISP_H = OB_SRC_H * PIXEL_SCALE;
+  const SPIKE_INSET_SRC = 2, SPIKE_INSET = SPIKE_INSET_SRC * PIXEL_SCALE;
 
-  // How many SOURCE pixels to sink the spike into the wall (kills any visual gap)
-  const SPIKE_INSET_SRC = 2; // try 2–3 if you still see a sliver
-  const SPIKE_INSET = SPIKE_INSET_SRC * PIXEL_SCALE;
+  // AUDIO: how the music rate scales with speed
+  const MUSIC_RATE_MIN = 1.00;
+  const MUSIC_RATE_MAX = 1.35; // feel free to raise to 1.5 for wilder tempo
+  const MUSIC_VOLUME   = 0.6;
 
   class Main extends Phaser.Scene {
     constructor(){ super('main'); }
@@ -114,18 +108,19 @@
     preload(){
       this.load.spritesheet('ninja', 'ninja_sheet.png', { frameWidth: 24, frameHeight: 34 });
       this.load.image('wallTile', 'wall.png');
+      this.load.image('obstacle', 'spike.png');
 
-      // Use your GitHub spike asset
-      this.load.image('obstacle', 'spike.png'); // update path if needed
+      // AUDIO: load your song (mp3/ogg/wav)
+      this.load.audio('bgm', ['NINJA.mp3']); // change path if needed
 
-      // fallback if asset missing (keeps file running)
+      // fallback obstacle if asset missing
       const g = this.make.graphics({add:false});
       g.fillStyle(0xff4d4d,1); g.fillRect(0,0,OB_SRC_W,OB_SRC_H);
       g.generateTexture('obstacle_fallback',OB_SRC_W,OB_SRC_H); g.destroy();
     }
 
     create(){
-      // Animations: slide 1–12, jump 13–16, land 17
+      // Animations
       this.anims.create({ key:'slide', frames: this.anims.generateFrameNumbers('ninja', { start:0,  end:11 }), frameRate:18, repeat:-1 });
       this.anims.create({ key:'jump',  frames: this.anims.generateFrameNumbers('ninja', { start:12, end:15 }), frameRate:18, repeat:0  });
       this.anims.create({ key:'land',  frames: [{ key:'ninja', frame:16 }], frameRate:1, repeat:0 });
@@ -133,13 +128,13 @@
       // Physics world
       this.physics.world.setBounds(0, 0, this.W, WORLD_H);
 
-      // Visual walls (tile sprites)
+      // Visual walls
       this.leftWallVis  = this.add.tileSprite(this.WALL_X.left,  WORLD_H/2, WALL_DISP_W, WORLD_H, 'wallTile')
         .setOrigin(0.5, 0.5).setDepth(0).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
       this.rightWallVis = this.add.tileSprite(this.WALL_X.right, WORLD_H/2, WALL_DISP_W, WORLD_H, 'wallTile')
         .setOrigin(0.5, 0.5).setDepth(0).setFlipX(true).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
 
-      // Physics rails (invisible) sized to visual width
+      // Physics rails
       this.add.graphics().generateTexture('rail1x1', 1, 1);
       this.leftRail  = this.physics.add.staticImage(this.WALL_X.left,  WORLD_H/2, 'rail1x1').setAlpha(0);
       this.rightRail = this.physics.add.staticImage(this.WALL_X.right, WORLD_H/2, 'rail1x1').setAlpha(0);
@@ -181,9 +176,12 @@
       this.physics.add.overlap(this.player, this.obstacles, () => { if(this.playing) this.gameOver(); }, null, this);
 
       // Helpers
-      this.updateFacing = () => this.player.setFlipX(this.side === 'right'); // frames face RIGHT by default
+      this.updateFacing = () => this.player.setFlipX(this.side === 'right');
       this.playSlide  = () => this.player.anims.play('slide', true);
       this.playJump   = () => this.player.anims.play('jump',  true);
+
+      // AUDIO: create (but don't play yet!)
+      this.music = this.sound.add('bgm', { loop: true, volume: MUSIC_VOLUME, rate: MUSIC_RATE_MIN });
 
       // Rail contact handler (land)
       const contact = (_player, rail) => {
@@ -198,7 +196,7 @@
           this.player.anims.play('land', true);
           this.time.delayedCall(80, () => { if (this.onWall && this.alive) this.playSlide(); });
         } else {
-          this.player.setVelocityX(0); // stick
+          this.player.setVelocityX(0);
         }
       };
       this.colLeft  = this.physics.add.collider(this.player, this.leftRail,  contact, null, this);
@@ -215,12 +213,16 @@
       this.lastY = this.startY;
       this.spawnTimer = this.time.addEvent({ delay: 60, loop: true, paused: true, callback: () => this.spawnAhead() });
 
-      // Start overlay & correct initial placement
+      // Start overlay & initial placement
       this.showStartOverlay();
       this.snapToWall('left');
 
-      // Handle resizes
+      // Resize handling
       this.scale.on('resize', (gameSize) => this.onResize(gameSize));
+
+      // (Optional) stop audio if tab hidden
+      this.game.events.on(Phaser.Core.Events.BLUR, () => { if (this.music.isPlaying) this.music.pause(); });
+      this.game.events.on(Phaser.Core.Events.FOCUS, () => { if (this.playing && this.music && this.music.isPaused) this.music.resume(); });
     }
 
     // --- Exact wall placement (no gap) ---
@@ -269,7 +271,14 @@
       const instr = this.add.text(this.W/2, this.H*0.42, 'Tap anywhere to start\nScore on each wall touch\nAvoid the hazards', {fontSize:'18px', color:'#b7c0cf', align:'center'}).setOrigin(0.5);
       this.overlayStart.add([dim,title,instr]);
 
-      this.input.once('pointerdown', () => this.startGame(), this);
+      // Only play music when the game actually starts (first tap)
+      this.input.once('pointerdown', () => {
+        if (this.music && !this.music.isPlaying) {
+          this.music.setRate(MUSIC_RATE_MIN);
+          this.music.play();
+        }
+        this.startGame();
+      }, this);
     }
     hideStartOverlay(){ if (this.overlayStart){ this.overlayStart.destroy(); this.overlayStart = null; } }
     hideGameOverOverlay(){ if (this.overlayGameOver){ this.overlayGameOver.destroy(); this.overlayGameOver = null; } }
@@ -279,6 +288,9 @@
       if (this.overlayGameOver) this.overlayGameOver.destroy();
 
       this.playing = false; this.spawnTimer.paused = true;
+
+      // stop music on game over
+      if (this.music && this.music.isPlaying) this.music.stop();
 
       this.overlayGameOver = this.add.container(0,0).setScrollFactor(0).setDepth(1000);
       const dim = this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({ useHandCursor:true });
@@ -321,7 +333,7 @@
 
     restart(){ this.hideGameOverOverlay(); this.startGame(); }
 
-    // Faster cross jump
+    // Jump
     jump(){
       if (!this.playing) return;
       if (!this.alive){ this.restart(); return; }
@@ -345,7 +357,7 @@
       return { min, max };
     }
 
-    // Spawn spikes that STICK to wall inner edge, left side flipped, inset to kill gaps
+    // Spawn spikes: stick to wall, flip left, inset
     spawnAhead(){
       if (!this.playing || !this.alive) return;
       const bufferAhead = 1000;
@@ -353,23 +365,17 @@
       const { min:curMin, max:curMax } = this.getCurrentSpacing();
 
       while (this.nextSpawnY < camY + bufferAhead) {
-        // Alternate sides, with some repeats
         let side = (Math.random() < 0.8) ? ((this.lastSide === 'left') ? 'right' : 'left') : this.lastSide;
-
         const y = Math.max(this.nextSpawnY, this.lastY + Phaser.Math.Between(curMin|0, curMax|0));
 
         const texKey = this.textures.exists('obstacle') ? 'obstacle' : 'obstacle_fallback';
         const ob = this.obstacles.create(0, y, texKey).setDepth(1);
         ob.setScale(PIXEL_SCALE);
-
-        // Tight hitbox at display DPI (trim a smidge horizontally for fairness)
         ob.body.setSize(OB_DISP_W - 2, OB_DISP_H, true);
 
-        // Flip left spikes
         ob.setData('side', side);
         ob.setFlipX(side === 'left');
 
-        // Snap flush to inner wall edge with an inward inset
         const edge = this.innerEdgeX(side);
         const half = OB_DISP_W * 0.5;
         const targetX = (side === 'left') ? Math.round(edge + half - SPIKE_INSET)
@@ -386,7 +392,6 @@
         if (Math.random() < 0.12) this.nextSpawnY += Phaser.Math.Between(40, 80);
       }
 
-      // Cull above camera
       const topCull = this.cameras.main.scrollY - 200;
       this.obstacles.children.each(o => { if (o.active && o.y < topCull) o.destroy(); }, this);
     }
@@ -405,7 +410,7 @@
       }
       if (this.playing && this.alive && this.player.y > WORLD_H - 200){ this.gameOver(); }
 
-      // Keep spikes glued to their wall & inset each frame (safety against float error)
+      // Glue spikes to wall every frame
       this.obstacles.children.iterate(ob => {
         if (!ob || !ob.active) return;
         const side = ob.getData('side');
@@ -417,6 +422,13 @@
         ob.setFlipX(side === 'left');
         ob.setVelocityX(0);
       });
+
+      // AUDIO: ramp music tempo with fall speed
+      if (this.music && this.music.isPlaying) {
+        const t = Phaser.Math.Clamp((this.fallSpeed - FALL_MIN)/(FALL_MAX - FALL_MIN), 0, 1);
+        const rate = Phaser.Math.Linear(MUSIC_RATE_MIN, MUSIC_RATE_MAX, t);
+        if (Math.abs(this.music.rate - rate) > 0.005) this.music.setRate(rate);
+      }
     }
 
     gameOver(){
@@ -431,6 +443,11 @@
       this.onWall = false;
       this.deathFall = true;
       this.player.setVelocity(0, 900);
+
+      // stop music (also handled in showGameOverOverlay, but safe here too)
+      if (this.music && this.music.isPlaying) this.music.stop();
+
+      this.showGameOverOverlay();
     }
 
     onResize(gameSize){
