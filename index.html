@@ -92,12 +92,12 @@
   const WALL_SRC_W    = 26;
   const WALL_DISP_W   = WALL_SRC_W * PIXEL_SCALE;
 
-  //  (source 24x12 → display scaled by PIXEL_SCALE)
+  // Spike (source 24x12 → display scaled by PIXEL_SCALE)
   const OB_SRC_W = 24, OB_SRC_H = 12;
   const OB_DISP_W = OB_SRC_W * PIXEL_SCALE, OB_DISP_H = OB_SRC_H * PIXEL_SCALE;
 
-  // How many SOURCE pixels to sink the  into the wall (kills any visual gap)
-  const _INSET_SRC = 3; // try 2–3 if you still see a sliver
+  // How many SOURCE pixels to sink the spike into the wall (kills any visual gap)
+  const SPIKE_INSET_SRC = 2; // try 2–3 if you still see a sliver
   const SPIKE_INSET = SPIKE_INSET_SRC * PIXEL_SCALE;
 
   class Main extends Phaser.Scene {
