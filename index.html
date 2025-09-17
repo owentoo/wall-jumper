@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html>
 <head>
@@ -76,22 +77,14 @@
 
 <script>
 (() => {
-  // ----------------- Tunables & Difficulty -----------------
-  const WORLD_H         = 100000;
-  const GRACE_START_MS  = 1000;   // slide before anything spawns
-  const CLEAR_WINDOW    = 160;    // min vertical gap between L/R spikes (guaranteed path)
-  const CROSS_SAFE_BAND = 170;    // reserved “landing band” on the opposite wall
+  // ------- Tunables -------
+  const WORLD_H       = 100000;
+  const FALL_MIN      = 300, FALL_MAX = 520, FALL_ACCEL = 6.0;
 
-  // Vertical speed (fast ramp feel)
-  const FALL_MIN    = 340;
-  const FALL_MAX    = 800;
-  const FALL_ACCEL  = 12.0;
-  const EXTRA_RAMP  = 0.010; // extra time-based ramp
-
-  // Jump
-  const PUSH_V   = 980;
-  const BOOST_V  = 1450;
-  const BOOST_MS = 60;
+  // Snappier cross jump
+  const PUSH_V        = 980;
+  const BOOST_V       = 1450;
+  const BOOST_MS      = 60;
 
   // Pixel scale used across sprites
   const PIXEL_SCALE   = 2;
@@ -103,11 +96,13 @@
   // Spikes (24x12 source → display scaled by PIXEL_SCALE)
   const OB_SRC_W = 24, OB_SRC_H = 12;
   const OB_DISP_W = OB_SRC_W * PIXEL_SCALE, OB_DISP_H = OB_SRC_H * PIXEL_SCALE;
-  const SPIKE_INSET_SRC = 2, SPIKE_INSET = SPIKE_INSET_SRC * PIXEL_SCALE;
+  const SPIKE_INSET_SRC = 2, SPIKE_INSET = SPIKE_INSET_SRC * PIXEL_SCALE; // sink into wall to kill gaps
 
-  // AUDIO mapping & smoothing (tempo follows speed)
-  const MUSIC_RATE_MIN = 1.00, MUSIC_RATE_MAX = 1.20;
-  const MUSIC_VOLUME   = 0.60, MUSIC_SMOOTH   = 0.08;
+  // AUDIO mapping & smoothing (tempo follows speed gently)
+  const MUSIC_RATE_MIN = 1.00;
+  const MUSIC_RATE_MAX = 1.12;
+  const MUSIC_VOLUME   = 0.60;
+  const MUSIC_SMOOTH   = 0.06;
 
   class Main extends Phaser.Scene {
     constructor(){ super('main'); }
@@ -132,7 +127,6 @@
       this.load.audio('bgm', ['NINJA.mp3']);
       this.load.audio('jumpSfx', 'jump.wav');
       this.load.audio('landSfx', 'land.wav');
-      this.load.audio('coinSfx', 'coin.wav'); // coin pickup sfx
 
       // fallback obstacle if asset missing
       const g = this.make.graphics({add:false});
@@ -145,8 +139,14 @@
       this.anims.create({ key:'slide', frames: this.anims.generateFrameNumbers('ninja', { start:0,  end:11 }), frameRate:18, repeat:-1 });
       this.anims.create({ key:'jump',  frames: this.anims.generateFrameNumbers('ninja', { start:12, end:15 }), frameRate:18, repeat:0  });
       this.anims.create({ key:'land',  frames: [{ key:'ninja', frame:16 }], frameRate:1, repeat:0 });
-      // Slower coin spin
-      this.anims.create({ key:'coinSpin', frames: this.anims.generateFrameNumbers('coin', { start: 0, end: 3 }), frameRate: 8, repeat: -1 });
+
+      // Coin spin: 4 frames @ 0.01s each => 100 fps
+      this.anims.create({
+        key: 'coinSpin',
+        frames: this.anims.generateFrameNumbers('coin', { start: 0, end: 3 }),
+        frameRate: 100,
+        repeat: -1
+      });
 
       // Physics world
       this.physics.world.setBounds(0, 0, this.W, WORLD_H);
@@ -174,7 +174,6 @@
       // State
       this.physics.world.gravity.y = 0;
       this.fallSpeed = FALL_MIN;
-      this.elapsedRunMs = 0;
       this.side = 'left';
       this.onWall = true;
       this.alive = true;
@@ -199,7 +198,35 @@
       this.obstacles = this.physics.add.group({ allowGravity:false, immovable:true });
       this.physics.add.overlap(this.player, this.obstacles, () => { if(this.playing) this.gameOver(); }, null, this);
 
-      // ---- AUDIO SETUP ----------
+      // ---- COIN SETUP ----
+      // A single coin that keeps reappearing further down the board.
+      const midX = () => (this.WALL_X.left + this.WALL_X.right) / 2;
+      this.coin = this.physics.add.sprite(midX(), this.startY + 360, 'coin', 0)
+        .setScale(PIXEL_SCALE)
+        .setDepth(1);
+      this.coin.body.setAllowGravity(false);
+      this.coin.play('coinSpin');
+
+      // Overlap to collect
+      this.physics.add.overlap(this.player, this.coin, () => this.collectCoin(), null, this);
+
+      // Helpers to place / advance coin
+      this.placeCoin = (y) => {
+        this.coin.setX(Math.round(midX()));
+        this.coin.setY(Math.round(y));
+        this.coin.setActive(true).setVisible(true);
+      };
+      this.advanceCoin = () => {
+        const ahead = Phaser.Math.Between(520, 820); // respawn some distance below
+        this.placeCoin(this.player.y + ahead);
+      };
+
+      // Helpers
+      this.updateFacing = () => this.player.setFlipX(this.side === 'right');
+      this.playSlide  = () => this.player.anims.play('slide', true);
+      this.playJump   = () => this.player.anims.play('jump',  true);
+
+      // --------- AUDIO SETUP ----------
       const saved = (()=>{ try { return JSON.parse(localStorage.getItem('wj_audio')||'{}'); } catch(e){ return {}; } })();
       this.musicBaseVolume = (typeof saved.musicBaseVolume === 'number') ? saved.musicBaseVolume : MUSIC_VOLUME;
       this.musicMuted = !!saved.musicMuted;
@@ -208,15 +235,13 @@
       this.music   = this.sound.add('bgm',     { loop: true, volume: this.musicBaseVolume, rate: MUSIC_RATE_MIN });
       this.jumpSfx = this.sound.add('jumpSfx', { volume: 0 });
       this.landSfx = this.sound.add('landSfx', { volume: 0 });
-      this.coinSfx = this.sound.add('coinSfx', { volume: 0 });
 
       this.applyAudioSettings = () => {
         const musicVol = this.musicMuted ? 0 : this.musicBaseVolume;
         const sfxVol   = this.sfxMuted   ? 0 : (this.musicBaseVolume / 3);
-        this.music.setVolume(musicVol);
-        this.jumpSfx.setVolume(sfxVol);
-        this.landSfx.setVolume(sfxVol);
-        this.coinSfx.setVolume(sfxVol);
+        if (this.music)   this.music.setVolume(musicVol);
+        if (this.jumpSfx) this.jumpSfx.setVolume(sfxVol);
+        if (this.landSfx) this.landSfx.setVolume(sfxVol);
         try {
           localStorage.setItem('wj_audio', JSON.stringify({
             musicBaseVolume: this.musicBaseVolume,
@@ -226,39 +251,6 @@
         } catch(e){}
       };
       this.applyAudioSettings();
-
-      // ---- COIN SETUP ----
-      const centerX = () => (this.WALL_X.left + this.WALL_X.right) / 2;
-      this.coin = this.physics.add.sprite(centerX(), this.startY + 380, 'coin', 0)
-        .setScale(PIXEL_SCALE)
-        .setDepth(1);
-      this.coin.body.setAllowGravity(false);
-      this.coin.play('coinSpin');
-      // hide coin on start screen; we’ll show after grace
-      this.coin.setActive(false).setVisible(false);
-
-      // collect overlap
-      this.physics.add.overlap(this.player, this.coin, () => this.collectCoin(), null, this);
-
-      // coin placement helpers
-      this.placeCoin = (y) => {
-        const sway = this.WALL_GAP * 0.15; // a bit of horizontal variety
-        const x = Math.round(Phaser.Math.Clamp(centerX() + Phaser.Math.Between(-sway, sway), this.WALL_X.left + 28, this.WALL_X.right - 28));
-        this.coin.setPosition(x, Math.round(y)).setActive(true).setVisible(true);
-      };
-      this.advanceCoin = () => {
-        // Distance scales with speed: faster → a bit closer so you see more coins
-        const t = Phaser.Math.Clamp((this.fallSpeed - FALL_MIN)/(FALL_MAX - FALL_MIN), 0, 1);
-        const minAhead = Phaser.Math.Linear(580, 420, t);
-        const maxAhead = Phaser.Math.Linear(920, 680, t);
-        const ahead = Phaser.Math.Between(minAhead|0, maxAhead|0);
-        this.placeCoin(this.player.y + ahead);
-      };
-
-      // Helpers
-      this.updateFacing = () => this.player.setFlipX(this.side === 'right');
-      this.playSlide  = () => this.player.anims.play('slide', true);
-      this.playJump   = () => this.player.anims.play('jump',  true);
 
       // Rail contact handler (land)
       const contact = (_player, rail) => {
@@ -280,22 +272,21 @@
       this.colLeft  = this.physics.add.collider(this.player, this.leftRail,  contact, null, this);
       this.colRight = this.physics.add.collider(this.player, this.rightRail, contact, null, this);
 
-      // Input
+      // Generic input (jump on tap)
       this.input.on('pointerdown', () => this.jump());
 
-      // Spawner (spacing tightens with speed)
-      this.spacingBaseMin = 210;
-      this.spacingBaseMax = 300;
-      this.nextSpawnY = this.startY + 220;
+      // Spawner
+      this.spacingBaseMin = 260;
+      this.spacingBaseMax = 340;
+      this.nextSpawnY = this.startY + 260;
       this.lastSide = 'right';
       this.lastY = this.startY;
-      this.lastSpikeY = { left: -99999, right: -99999 }; // track last spike per side
-      this.forbiddenBand = { left: null, right: null };   // “landing band” blocked on opposite wall
-
       this.spawnTimer = this.time.addEvent({ delay: 60, loop: true, paused: true, callback: () => this.spawnAhead() });
 
       // Start overlay & initial placement
       this.showStartOverlay();
+      this.snapToWall('left', this.startY, { stationary:true });
+      this.player.setVelocity(0,0);
 
       // Resize
       this.scale.on('resize', (gameSize) => this.onResize(gameSize));
@@ -312,6 +303,7 @@
     }
     playerHalfWidth(){ return this.player?.body ? this.player.body.halfWidth : (this.player.displayWidth * 0.5); }
 
+    // Add stationary control to prevent pre-start drift
     snapToWall(which, yOverride = null, { stationary = false } = {}){
       this.onWall = true;
       this.side = which;
@@ -356,11 +348,10 @@
       if (this.overlayStart) this.overlayStart.destroy();
 
       this.playing = false; this.alive = true; this.deathFall = false;
-      this.fallSpeed = FALL_MIN; this.elapsedRunMs = 0;
+      this.fallSpeed = FALL_MIN;
       this.obstacles.clear(true,true);
       this.spawnTimer.paused = true;
 
-      // camera positioning
       this.cam.stopFollow(); this.cam.setBounds(0,0,this.W,WORLD_H);
       this.cam.setScroll(0, Math.max(0, this.startY - this.H*0.5));
       this.cam.startFollow(this.player, true, 1, 1);
@@ -368,23 +359,32 @@
       this.subText.setText('Tap to start').setVisible(true);
 
       this.overlayStart = this.add.container(0,0).setScrollFactor(0).setDepth(1000);
-      const dim = this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45)
-        .setInteractive({ useHandCursor:true });
+      const dim = this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({ useHandCursor:true });
       const title = this.add.text(this.W/2, this.H*0.30, 'WALL JUMPER', {fontSize:'40px', fontStyle:'800', color:'#ffffff'}).setOrigin(0.5);
-      const instr = this.add.text(this.W/2, this.H*0.40, 'Tap to start\nSlide for a second, then avoid the hazards', {fontSize:'18px', color:'#b7c0cf', align:'center'}).setOrigin(0.5);
-      this.overlayStart.add([dim,title,instr]);
+      const instr = this.add.text(this.W/2, this.H*0.40, 'Tap anywhere to start\nScore on each wall touch\nAvoid the hazards', {fontSize:'18px', color:'#b7c0cf', align:'center'}).setOrigin(0.5);
 
-      // Hide coin during start screen
-      if (this.coin) this.coin.setActive(false).setVisible(false);
+      // --- Audio toggles (start screen) ---
+      const musicToggle = this.makeToggleButton({
+        x: this.W/2 - 95, y: this.H*0.55,
+        label: 'Music',
+        getOn: () => !this.musicMuted,
+        onToggle: () => { this.musicMuted = !this.musicMuted; }
+      });
+      const sfxToggle = this.makeToggleButton({
+        x: this.W/2 + 95, y: this.H*0.55,
+        label: 'SFX',
+        getOn: () => !this.sfxMuted,
+        onToggle: () => { this.sfxMuted = !this.sfxMuted; }
+      });
 
-      // freeze player at start
+      this.overlayStart.add([dim,title,instr, musicToggle.group, sfxToggle.group]);
+
+      // Freeze at start
       this.snapToWall('left', this.startY, { stationary:true });
       this.player.setVelocity(0,0);
 
-      const start = () => this.startGame();
-      // listen on both scene and overlay for robustness (mobile Safari quirks)
-      this.input.once('pointerdown', start, this);
-      dim.once('pointerdown', start);
+      // Tap to start
+      this.input.once('pointerdown', () => this.startGame(), this);
     }
     hideStartOverlay(){ if (this.overlayStart){ this.overlayStart.destroy(); this.overlayStart = null; } }
     hideGameOverOverlay(){ if (this.overlayGameOver){ this.overlayGameOver.destroy(); this.overlayGameOver = null; } }
@@ -422,23 +422,18 @@
 
       this.score = 0; this.scoreText.setText('0');
       this.subText.setText('Tap to jump').setVisible(true);
-      this.fallSpeed = FALL_MIN; this.elapsedRunMs = 0;
+      this.fallSpeed = FALL_MIN;
       this.obstacles.clear(true,true);
       this.player.clearTint();
 
-      // start falling now
       this.snapToWall('left', this.startY, { stationary:false });
 
-      // Force first objects to appear from below AFTER the camera is locked
-      const bottom = this.cam.scrollY + this.H;
-      this.nextSpawnY = bottom + 80; // first spikes off-screen
+      this.nextSpawnY = this.startY + 260;
       this.lastSide = 'right';
       this.lastY = this.startY;
-      this.lastSpikeY = { left: -99999, right: -99999 };
-      this.forbiddenBand = { left: null, right: null };
 
-      // keep coin hidden until grace ends
-      this.coin.setActive(false).setVisible(false);
+      // Place coin just ahead at start
+      this.placeCoin(this.player.y + 420);
 
       this.alive = true;
       this.deathFall = false;
@@ -448,14 +443,7 @@
       this.cam.setBounds(0,0,this.W,WORLD_H);
       this.cam.startFollow(this.player, true, 1, 1);
 
-      // Begin spawning AFTER grace; also place coin off-screen then
-      this.time.delayedCall(GRACE_START_MS, () => {
-        if (!this.alive) return;
-        const b = this.cam.scrollY + this.H;
-        this.placeCoin(b + 140);                 // coin rises into frame
-        this.coin.setActive(true).setVisible(true);
-        this.spawnTimer.paused = false;
-      });
+      this.spawnTimer.paused = false;
     }
 
     restart(){ this.hideGameOverOverlay(); this.startGame(); }
@@ -479,106 +467,51 @@
       });
     }
 
-    // spacing now tightens moderately as speed rises
     getCurrentSpacing(){
       const t = Phaser.Math.Clamp((this.fallSpeed - FALL_MIN)/(FALL_MAX - FALL_MIN), 0, 1);
-      const min = Phaser.Math.Linear(this.spacingBaseMin, this.spacingBaseMin + 40, t);
-      const max = Phaser.Math.Linear(this.spacingBaseMax, this.spacingBaseMax + 80, t);
+      const min = Phaser.Math.Linear(this.spacingBaseMin, this.spacingBaseMin + 70, t);
+      const max = Phaser.Math.Linear(this.spacingBaseMax, this.spacingBaseMax + 110, t);
       return { min, max };
     }
 
-    // --- Safety helpers: guarantee a path & safe landing zone ---
-    canPlace(side, y){
-      const other = (side === 'left') ? 'right' : 'left';
-      const okWindow = Math.abs(y - this.lastSpikeY[other]) >= CLEAR_WINDOW;
-      const band = this.forbiddenBand[side];
-      const okBand = !band || y < band.min || y > band.max;
-      return okWindow && okBand;
-    }
-    adjustForSafety(side, y){
-      const other = (side === 'left') ? 'right' : 'left';
-      if (Math.abs(y - this.lastSpikeY[other]) < CLEAR_WINDOW) {
-        y = this.lastSpikeY[other] + (y >= this.lastSpikeY[other] ? CLEAR_WINDOW : -CLEAR_WINDOW);
-      }
-      const band = this.forbiddenBand[side];
-      if (band && y >= band.min && y <= band.max) {
-        y = band.max + 12;
-      }
-      return y;
-    }
-
-    // Spawn spikes with variety while enforcing safety
+    // Spawn spikes
     spawnAhead(){
       if (!this.playing || !this.alive) return;
-      const bufferAhead = 1100;
+      const bufferAhead = 1000;
       const camY = this.player.y;
       const { min:curMin, max:curMax } = this.getCurrentSpacing();
 
       while (this.nextSpawnY < camY + bufferAhead) {
-        let y = Math.max(this.nextSpawnY, this.lastY + Phaser.Math.Between(curMin|0, curMax|0));
-        let side = (Math.random() < 0.7) ? (this.lastSide === 'left' ? 'right' : 'left') : this.lastSide;
+        let side = (Math.random() < 0.8) ? ((this.lastSide === 'left') ? 'right' : 'left') : this.lastSide;
+        const y = Math.max(this.nextSpawnY, this.lastY + Phaser.Math.Between(curMin|0, curMax|0));
 
-        y = this.adjustForSafety(side, y);
-        this.createSpikeAt(side, y);
+        const texKey = this.textures.exists('obstacle') ? 'obstacle' : 'obstacle_fallback';
+        const ob = this.obstacles.create(0, y, texKey).setDepth(1);
+        ob.setScale(PIXEL_SCALE);
+        ob.body.setSize(OB_DISP_W - 2, OB_DISP_H, true);
 
-        // Opposite-wall pair with enforced offset (keeps a passable gap)
-        if (Math.random() < 0.16) {
-          const otherSide = (side === 'left') ? 'right' : 'left';
-          let y2 = y + (Math.random() < 0.5 ? -1 : 1) * Phaser.Math.Between(CLEAR_WINDOW, CLEAR_WINDOW + 40);
-          y2 = this.adjustForSafety(otherSide, y2);
-          this.createSpikeAt(otherSide, y2);
-        }
+        ob.setData('side', side);
+        ob.setFlipX(side === 'left');
 
-        // Stacked double on same wall, still safe
-        if (Math.random() < 0.18) {
-          let y3 = y + Phaser.Math.Between(60, 90);
-          y3 = this.adjustForSafety(side, y3);
-          this.createSpikeAt(side, y3);
-        }
+        const edge = this.innerEdgeX(side);
+        const half = OB_DISP_W * 0.5;
+        const targetX = (side === 'left') ? Math.round(edge + half - SPIKE_INSET)
+                                          : Math.round(edge - half + SPIKE_INSET);
+        ob.x = targetX;
 
-        // Next cluster position
+        ob.body.allowGravity = false;
+        ob.setImmovable(true);
+        ob.setVelocity(0, 0);
+
+        this.lastY = y;
+        this.lastSide = side;
         this.nextSpawnY = y + Phaser.Math.Between(curMin|0, curMax|0);
-        this.lastY = y; this.lastSide = side;
-
-        // Occasionally tease a coin near hazards; ensure it rises into frame
-        if (Math.random() < 0.20 && this.coin && this.coin.active) {
-          const bottom = this.cam.scrollY + this.H;
-          const yy = Math.max(bottom + 60, y + Phaser.Math.Between(80, 160));
-          this.placeCoin(yy);
-        }
+        if (Math.random() < 0.12) this.nextSpawnY += Phaser.Math.Between(40, 80);
       }
 
-      // Cull above camera (obstacles only)
+      // Cull above camera
       const topCull = this.cameras.main.scrollY - 200;
       this.obstacles.children.each(o => { if (o.active && o.y < topCull) o.destroy(); }, this);
-    }
-
-    createSpikeAt(side, y){
-      const texKey = this.textures.exists('obstacle') ? 'obstacle' : 'obstacle_fallback';
-      const ob = this.obstacles.create(0, y, texKey).setDepth(1);
-      ob.setScale(PIXEL_SCALE);
-      ob.body.setSize(OB_DISP_W - 2, OB_DISP_H, true);
-
-      ob.setData('side', side);
-      ob.setFlipX(side === 'left');
-
-      const edge = this.innerEdgeX(side);
-      const half = OB_DISP_W * 0.5;
-      const targetX = (side === 'left') ? Math.round(edge + half - SPIKE_INSET)
-                                        : Math.round(edge - half + SPIKE_INSET);
-      ob.x = targetX;
-
-      ob.body.allowGravity = false;
-      ob.setImmovable(true);
-      ob.setVelocity(0, 0);
-
-      // remember last spike y for gap safety
-      this.lastSpikeY[side] = y;
-      // reserve a “landing band” on the opposite wall so a cross-jump is always safe
-      const other = (side === 'left') ? 'right' : 'left';
-      this.forbiddenBand[other] = { min: y - CROSS_SAFE_BAND/2, max: y + CROSS_SAFE_BAND/2 };
-
-      return ob;
     }
 
     // ---- COIN PICKUP ----
@@ -588,9 +521,6 @@
       // Score +5
       this.score += 5;
       this.scoreText.setText(this.score);
-
-      // SFX
-      this.coinSfx && this.coinSfx.play();
 
       // Little pop & +5 text
       const pop = this.add.text(this.coin.x, this.coin.y - 10, '+5', { fontSize:'16px', color:'#ffd54a' }).setDepth(5);
@@ -609,10 +539,7 @@
 
     update(_time, dt){
       if (this.alive){
-        // Base ramp + light time-based ramp (feels more “notable”)
-        this.elapsedRunMs += dt || 0;
-        const timeBoost = (this.elapsedRunMs * EXTRA_RAMP) / 1000; // scaled
-        this.fallSpeed = Math.min(FALL_MAX, this.fallSpeed + (FALL_ACCEL + timeBoost) * (dt/1000));
+        this.fallSpeed = Math.min(FALL_MAX, this.fallSpeed + FALL_ACCEL * (dt/1000));
         if (this.player.body) this.player.setVelocityY(this.fallSpeed);
       } else if (this.deathFall){
         if (this.player.body) this.player.setVelocity(0, 900);
@@ -637,13 +564,15 @@
         ob.setVelocityX(0);
       });
 
-      // COIN: let it pass fully bottom->top before respawn
+      // Ensure coin stays centered between the walls even after resize
       if (this.coin && this.coin.active) {
-        const topFullyGone = this.cameras.main.scrollY - (this.H + 80);
-        if (this.coin.y < topFullyGone) {
-          this.coin.setActive(false).setVisible(false);
-          this.advanceCoin();
-        }
+        const targetX = Math.round((this.WALL_X.left + this.WALL_X.right) / 2);
+        if (this.coin.x !== targetX) { this.coin.x = targetX; this.coin.body.updateFromGameObject(); }
+      }
+
+      // If coin somehow scrolled past and wasn't collected, push it ahead
+      if (this.coin && (this.coin.y < this.cameras.main.scrollY - 200)) {
+        this.advanceCoin();
       }
 
       // AUDIO: ramp music tempo with fall speed (eased + smoothed)
@@ -685,13 +614,10 @@
       this.leftWallVis.setPosition(this.WALL_X.left, WORLD_H/2).setSize(WALL_DISP_W, WORLD_H).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
       this.rightWallVis.setPosition(this.WALL_X.right, WORLD_H/2).setSize(WALL_DISP_W, WORLD_H).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
 
-      if (this.onWall) this.snapToWall(this.side, null, { stationary: !this.playing }); // keep exact alignment
+      if (this.onWall) this.snapToWall(this.side, null, { stationary: !this.playing });
 
-      // keep coin inside current gap if visible
-      if (this.coin && this.coin.active) {
-        const minX = this.WALL_X.left + 28, maxX = this.WALL_X.right - 28;
-        this.coin.x = Math.round(Phaser.Math.Clamp(this.coin.x, minX, maxX));
-      }
+      // Keep coin centered after resizes
+      if (this.coin) this.coin.x = Math.round((this.WALL_X.left + this.WALL_X.right)/2);
 
       this.scoreText.setPosition(this.W/2, 50);
       this.subText.setPosition(this.W/2, this.H - 34);
