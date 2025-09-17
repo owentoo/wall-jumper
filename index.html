@@ -126,7 +126,6 @@
       this.load.audio('bgm', ['NINJA.mp3']);
       this.load.audio('jumpSfx', 'jump.wav');
       this.load.audio('landSfx', 'land.wav');
-      this.load.audio('coinSfx', 'coin.wav'); // <<< NEW: load coin sound
 
       // fallback obstacle if asset missing
       const g = this.make.graphics({add:false});
@@ -140,7 +139,6 @@
       this.anims.create({ key:'jump',  frames: this.anims.generateFrameNumbers('ninja', { start:12, end:15 }), frameRate:18, repeat:0  });
       this.anims.create({ key:'land',  frames: [{ key:'ninja', frame:16 }], frameRate:1, repeat:0 });
 
-      // Coin spin: 4 frames
       this.anims.create({
         key: 'coinSpin',
         frames: this.anims.generateFrameNumbers('coin', { start: 0, end: 3 }),
@@ -213,7 +211,7 @@
         this.coin.setActive(true).setVisible(true);
       };
       this.advanceCoin = () => {
-        const ahead = Phaser.Math.Between(520, 820); // respawn some distance below
+        const ahead = Phaser.Math.Between(520, 820);
         this.placeCoin(this.player.y + ahead);
       };
 
@@ -231,7 +229,20 @@
       this.music   = this.sound.add('bgm',     { loop: true, volume: this.musicBaseVolume, rate: MUSIC_RATE_MIN });
       this.jumpSfx = this.sound.add('jumpSfx', { volume: 0 });
       this.landSfx = this.sound.add('landSfx', { volume: 0 });
-      this.coinSfx = this.sound.add('coinSfx', { volume: 0 }); // <<< NEW: create like others
+
+      // NEW (coin audio): HTMLAudio fallback, created after first user gesture
+      this.coinAudio = null;
+      const initCoinAudio = () => {
+        try {
+          const a = new Audio('coin.wav');
+          a.preload = 'auto';
+          a.crossOrigin = 'anonymous';
+          a.muted = this.sfxMuted;
+          a.volume = this.musicBaseVolume / 3; // keep SFX under music, like others
+          this.coinAudio = a;
+        } catch(e) { /* ignore */ }
+      };
+      this.input.once('pointerdown', initCoinAudio);
 
       this.applyAudioSettings = () => {
         const musicVol = this.musicMuted ? 0 : this.musicBaseVolume;
@@ -239,7 +250,11 @@
         if (this.music)   this.music.setVolume(musicVol);
         if (this.jumpSfx) this.jumpSfx.setVolume(sfxVol);
         if (this.landSfx) this.landSfx.setVolume(sfxVol);
-        if (this.coinSfx) this.coinSfx.setVolume(sfxVol); // <<< NEW: follow SFX volume
+        // NEW (coin audio): reflect mute/volume
+        if (this.coinAudio) {
+          this.coinAudio.muted = this.sfxMuted;
+          this.coinAudio.volume = sfxVol;
+        }
         try {
           localStorage.setItem('wj_audio', JSON.stringify({
             musicBaseVolume: this.musicBaseVolume,
@@ -361,7 +376,6 @@
       const title = this.add.text(this.W/2, this.H*0.30, 'WALL JUMPER', {fontSize:'40px', fontStyle:'800', color:'#ffffff'}).setOrigin(0.5);
       const instr = this.add.text(this.W/2, this.H*0.40, 'Tap anywhere to start\nScore on each wall touch\nAvoid the hazards', {fontSize:'18px', color:'#b7c0cf', align:'center'}).setOrigin(0.5);
 
-      // --- Audio toggles (start screen) ---
       const musicToggle = this.makeToggleButton({
         x: this.W/2 - 95, y: this.H*0.55,
         label: 'Music',
@@ -520,8 +534,13 @@
       this.score += 5;
       this.scoreText.setText(this.score);
 
-      // <<< NEW: play coin SFX like others
-      if (this.coinSfx) this.coinSfx.play();
+      // NEW (coin audio): play if initialized (after first tap)
+      if (this.coinAudio) {
+        try {
+          this.coinAudio.currentTime = 0;
+          this.coinAudio.play();
+        } catch(e) { /* ignore */ }
+      }
 
       // Little pop & +5 text
       const pop = this.add.text(this.coin.x, this.coin.y - 10, '+5', { fontSize:'16px', color:'#ffd54a' }).setDepth(5);
@@ -617,7 +636,6 @@
 
       if (this.onWall) this.snapToWall(this.side, null, { stationary: !this.playing });
 
-      // Keep coin centered after resizes
       if (this.coin) this.coin.x = Math.round((this.WALL_X.left + this.WALL_X.right)/2);
 
       this.scoreText.setPosition(this.W/2, 50);
