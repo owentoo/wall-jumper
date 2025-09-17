@@ -126,7 +126,6 @@
       this.load.audio('bgm', ['NINJA.mp3']);
       this.load.audio('jumpSfx', 'jump.wav');
       this.load.audio('landSfx', 'land.wav');
-      this.load.audio('coinSfx', 'coin.wav'); // NEW: coin pickup sound
 
       // fallback obstacle if asset missing
       const g = this.make.graphics({add:false});
@@ -140,7 +139,7 @@
       this.anims.create({ key:'jump',  frames: this.anims.generateFrameNumbers('ninja', { start:12, end:15 }), frameRate:18, repeat:0  });
       this.anims.create({ key:'land',  frames: [{ key:'ninja', frame:16 }], frameRate:1, repeat:0 });
 
-      // Coin spin (unchanged)
+      // Coin spin: 4 frames @ 0.01s each => 100 fps
       this.anims.create({
         key: 'coinSpin',
         frames: this.anims.generateFrameNumbers('coin', { start: 0, end: 3 }),
@@ -199,6 +198,7 @@
       this.physics.add.overlap(this.player, this.obstacles, () => { if(this.playing) this.gameOver(); }, null, this);
 
       // ---- COIN SETUP ----
+      // A single coin that keeps reappearing further down the board.
       const midX = () => (this.WALL_X.left + this.WALL_X.right) / 2;
       this.coin = this.physics.add.sprite(midX(), this.startY + 360, 'coin', 0)
         .setScale(PIXEL_SCALE)
@@ -234,7 +234,6 @@
       this.music   = this.sound.add('bgm',     { loop: true, volume: this.musicBaseVolume, rate: MUSIC_RATE_MIN });
       this.jumpSfx = this.sound.add('jumpSfx', { volume: 0 });
       this.landSfx = this.sound.add('landSfx', { volume: 0 });
-      this.coinSfx = this.sound.add('coinSfx', { volume: 0 }); // NEW: handle
 
       this.applyAudioSettings = () => {
         const musicVol = this.musicMuted ? 0 : this.musicBaseVolume;
@@ -242,7 +241,6 @@
         if (this.music)   this.music.setVolume(musicVol);
         if (this.jumpSfx) this.jumpSfx.setVolume(sfxVol);
         if (this.landSfx) this.landSfx.setVolume(sfxVol);
-        if (this.coinSfx) this.coinSfx.setVolume(sfxVol); // NEW
         try {
           localStorage.setItem('wj_audio', JSON.stringify({
             musicBaseVolume: this.musicBaseVolume,
@@ -294,7 +292,7 @@
 
       // Optional: pause/resume audio on blur/focus
       this.game.events.on(Phaser.Core.Events.BLUR, () => { if (this.music && this.music.isPlaying) this.music.pause(); });
-      this.game.events.on(Phaser.Core.Events.FOCUS, () => { if (this.playing && this.music.isPaused) this.music.resume(); });
+      this.game.events.on(Phaser.Core.Events.FOCUS, () => { if (this.playing && this.music && this.music.isPaused) this.music.resume(); });
     }
 
     // --- Wall geometry helpers ---
@@ -522,8 +520,6 @@
       // Score +5
       this.score += 5;
       this.scoreText.setText(this.score);
-
-      if (this.coinSfx) this.coinSfx.play(); // NEW: play coin sound
 
       // Little pop & +5 text
       const pop = this.add.text(this.coin.x, this.coin.y - 10, '+5', { fontSize:'16px', color:'#ffd54a' }).setDepth(5);
