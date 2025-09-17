@@ -1,4 +1,3 @@
-
 <!doctype html>
 <html>
 <head>
@@ -100,9 +99,9 @@
 
   // AUDIO mapping & smoothing (tempo follows speed gently)
   const MUSIC_RATE_MIN = 1.00;
-  const MUSIC_RATE_MAX = 1.12; // gentle top-end so it matches gameplay feel
-  const MUSIC_VOLUME   = 0.60; // base music volume
-  const MUSIC_SMOOTH   = 0.06; // 0..1, higher = quicker rate changes
+  const MUSIC_RATE_MAX = 1.12;
+  const MUSIC_VOLUME   = 0.60;
+  const MUSIC_SMOOTH   = 0.06;
 
   class Main extends Phaser.Scene {
     constructor(){ super('main'); }
@@ -120,6 +119,9 @@
       this.load.image('wallTile', 'wall.png');
       this.load.image('obstacle', 'spike.png');
 
+      // Coin (16x16, 4 frames)
+      this.load.spritesheet('coin', 'coin.png', { frameWidth: 16, frameHeight: 16 });
+
       // Music + SFX
       this.load.audio('bgm', ['NINJA.mp3']);
       this.load.audio('jumpSfx', 'jump.wav');
@@ -136,6 +138,14 @@
       this.anims.create({ key:'slide', frames: this.anims.generateFrameNumbers('ninja', { start:0,  end:11 }), frameRate:18, repeat:-1 });
       this.anims.create({ key:'jump',  frames: this.anims.generateFrameNumbers('ninja', { start:12, end:15 }), frameRate:18, repeat:0  });
       this.anims.create({ key:'land',  frames: [{ key:'ninja', frame:16 }], frameRate:1, repeat:0 });
+
+      // Coin spin: 4 frames @ 0.01s each => 100 fps
+      this.anims.create({
+        key: 'coinSpin',
+        frames: this.anims.generateFrameNumbers('coin', { start: 0, end: 3 }),
+        frameRate: 100,
+        repeat: -1
+      });
 
       // Physics world
       this.physics.world.setBounds(0, 0, this.W, WORLD_H);
@@ -187,27 +197,47 @@
       this.obstacles = this.physics.add.group({ allowGravity:false, immovable:true });
       this.physics.add.overlap(this.player, this.obstacles, () => { if(this.playing) this.gameOver(); }, null, this);
 
+      // ---- COIN SETUP ----
+      // A single coin that keeps reappearing further down the board.
+      const midX = () => (this.WALL_X.left + this.WALL_X.right) / 2;
+      this.coin = this.physics.add.sprite(midX(), this.startY + 360, 'coin', 0)
+        .setScale(PIXEL_SCALE)
+        .setDepth(1);
+      this.coin.body.setAllowGravity(false);
+      this.coin.play('coinSpin');
+
+      // Overlap to collect
+      this.physics.add.overlap(this.player, this.coin, () => this.collectCoin(), null, this);
+
+      // Helpers to place / advance coin
+      this.placeCoin = (y) => {
+        this.coin.setX(Math.round(midX()));
+        this.coin.setY(Math.round(y));
+        this.coin.setActive(true).setVisible(true);
+      };
+      this.advanceCoin = () => {
+        const ahead = Phaser.Math.Between(520, 820); // respawn some distance below
+        this.placeCoin(this.player.y + ahead);
+      };
+
       // Helpers
       this.updateFacing = () => this.player.setFlipX(this.side === 'right');
       this.playSlide  = () => this.player.anims.play('slide', true);
       this.playJump   = () => this.player.anims.play('jump',  true);
 
       // --------- AUDIO SETUP ----------
-      // Settings (persisted)
       const saved = (()=>{ try { return JSON.parse(localStorage.getItem('wj_audio')||'{}'); } catch(e){ return {}; } })();
       this.musicBaseVolume = (typeof saved.musicBaseVolume === 'number') ? saved.musicBaseVolume : MUSIC_VOLUME;
       this.musicMuted = !!saved.musicMuted;
       this.sfxMuted   = !!saved.sfxMuted;
 
-      // Sound objects
       this.music   = this.sound.add('bgm',     { loop: true, volume: this.musicBaseVolume, rate: MUSIC_RATE_MIN });
       this.jumpSfx = this.sound.add('jumpSfx', { volume: 0 });
       this.landSfx = this.sound.add('landSfx', { volume: 0 });
 
-      // Centralized volume application
       this.applyAudioSettings = () => {
         const musicVol = this.musicMuted ? 0 : this.musicBaseVolume;
-        const sfxVol   = this.sfxMuted   ? 0 : (this.musicBaseVolume / 3); // <<< SFX = 1/3 of music
+        const sfxVol   = this.sfxMuted   ? 0 : (this.musicBaseVolume / 3);
         if (this.music)   this.music.setVolume(musicVol);
         if (this.jumpSfx) this.jumpSfx.setVolume(sfxVol);
         if (this.landSfx) this.landSfx.setVolume(sfxVol);
@@ -254,8 +284,7 @@
 
       // Start overlay & initial placement
       this.showStartOverlay();
-      // Place and FREEZE the ninja so there is no pre-start drift
-      this.snapToWall('left', this.startY, { stationary:true }); // <<< freeze
+      this.snapToWall('left', this.startY, { stationary:true });
       this.player.setVelocity(0,0);
 
       // Resize
@@ -286,7 +315,6 @@
       if (yOverride !== null) this.player.setY(yOverride);
       this.player.setX(x);
 
-      // If stationary (e.g., on start screen), do not apply falling velocity
       this.player.setVelocity(0, stationary ? 0 : this.fallSpeed);
 
       this.updateFacing();
@@ -350,11 +378,11 @@
 
       this.overlayStart.add([dim,title,instr, musicToggle.group, sfxToggle.group]);
 
-      // Ensure ninja is EXACTLY at start position and frozen before the run
-      this.snapToWall('left', this.startY, { stationary:true }); // <<< freeze on overlay show
+      // Freeze at start
+      this.snapToWall('left', this.startY, { stationary:true });
       this.player.setVelocity(0,0);
 
-      // Tap to start → starts music and run (works on mobile policies)
+      // Tap to start
       this.input.once('pointerdown', () => this.startGame(), this);
     }
     hideStartOverlay(){ if (this.overlayStart){ this.overlayStart.destroy(); this.overlayStart = null; } }
@@ -384,12 +412,11 @@
       if (this.colLeft)  this.colLeft.active = true;
       if (this.colRight) this.colRight.active = true;
 
-      // Music ALWAYS restarts at beginning of a run
       if (this.music){
         if (this.music.isPlaying) this.music.stop();
         this.music.setRate(MUSIC_RATE_MIN);
-        this.applyAudioSettings(); // ensure current mute/volumes
-        this.music.play(); // triggered from pointerdown path
+        this.applyAudioSettings();
+        this.music.play();
       }
 
       this.score = 0; this.scoreText.setText('0');
@@ -398,12 +425,14 @@
       this.obstacles.clear(true,true);
       this.player.clearTint();
 
-      // Place and UNFREEZE for gameplay
-      this.snapToWall('left', this.startY, { stationary:false }); // <<< same position, now moving
+      this.snapToWall('left', this.startY, { stationary:false });
 
       this.nextSpawnY = this.startY + 260;
       this.lastSide = 'right';
       this.lastY = this.startY;
+
+      // Place coin just ahead at start
+      this.placeCoin(this.player.y + 420);
 
       this.alive = true;
       this.deathFall = false;
@@ -418,7 +447,7 @@
 
     restart(){ this.hideGameOverOverlay(); this.startGame(); }
 
-    // Jump (plays jump SFX)
+    // Jump
     jump(){
       if (!this.playing) return;
       if (!this.alive){ this.restart(); return; }
@@ -444,7 +473,7 @@
       return { min, max };
     }
 
-    // Spawn spikes: stick to wall, flip left, inset
+    // Spawn spikes
     spawnAhead(){
       if (!this.playing || !this.alive) return;
       const bufferAhead = 1000;
@@ -484,6 +513,29 @@
       this.obstacles.children.each(o => { if (o.active && o.y < topCull) o.destroy(); }, this);
     }
 
+    // ---- COIN PICKUP ----
+    collectCoin(){
+      if (!this.playing || !this.alive || !this.coin.active) return;
+
+      // Score +5
+      this.score += 5;
+      this.scoreText.setText(this.score);
+
+      // Little pop & +5 text
+      const pop = this.add.text(this.coin.x, this.coin.y - 10, '+5', { fontSize:'16px', color:'#ffd54a' }).setDepth(5);
+      pop.setScale(1).setOrigin(0.5);
+      this.tweens.add({
+        targets: pop,
+        y: pop.y - 24, alpha: 0,
+        duration: 420, ease: 'Quad.Out',
+        onComplete: () => pop.destroy()
+      });
+
+      // Hide coin and respawn ahead
+      this.coin.setActive(false).setVisible(false);
+      this.time.delayedCall(150, () => this.advanceCoin());
+    }
+
     update(_time, dt){
       if (this.alive){
         this.fallSpeed = Math.min(FALL_MAX, this.fallSpeed + FALL_ACCEL * (dt/1000));
@@ -510,6 +562,17 @@
         ob.setFlipX(side === 'left');
         ob.setVelocityX(0);
       });
+
+      // Ensure coin stays centered between the walls even after resize
+      if (this.coin && this.coin.active) {
+        const targetX = Math.round((this.WALL_X.left + this.WALL_X.right) / 2);
+        if (this.coin.x !== targetX) { this.coin.x = targetX; this.coin.body.updateFromGameObject(); }
+      }
+
+      // If coin somehow scrolled past and wasn't collected, push it ahead
+      if (this.coin && (this.coin.y < this.cameras.main.scrollY - 200)) {
+        this.advanceCoin();
+      }
 
       // AUDIO: ramp music tempo with fall speed (eased + smoothed)
       if (this.music && this.music.isPlaying) {
@@ -550,7 +613,10 @@
       this.leftWallVis.setPosition(this.WALL_X.left, WORLD_H/2).setSize(WALL_DISP_W, WORLD_H).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
       this.rightWallVis.setPosition(this.WALL_X.right, WORLD_H/2).setSize(WALL_DISP_W, WORLD_H).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
 
-      if (this.onWall) this.snapToWall(this.side, null, { stationary: !this.playing }); // <<< keep exact alignment
+      if (this.onWall) this.snapToWall(this.side, null, { stationary: !this.playing });
+
+      // Keep coin centered after resizes
+      if (this.coin) this.coin.x = Math.round((this.WALL_X.left + this.WALL_X.right)/2);
 
       this.scoreText.setPosition(this.W/2, 50);
       this.subText.setPosition(this.W/2, this.H - 34);
