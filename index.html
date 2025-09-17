@@ -76,34 +76,36 @@
 
 <script>
 (() => {
-  // --- Difficulty & Safety ---
+  // ----------------- Tunables & Difficulty -----------------
   const WORLD_H         = 100000;
-  const GRACE_START_MS  = 1000;          // slide before anything spawns
-  const CLEAR_WINDOW    = 140;           // min vertical spacing between L/R spikes
-  const CROSS_SAFE_BAND = 140;           // “landing zone” kept clear on opposite wall
+  const GRACE_START_MS  = 1000;   // slide before anything spawns
+  const CLEAR_WINDOW    = 160;    // min vertical gap between L/R spikes (guaranteed path)
+  const CROSS_SAFE_BAND = 170;    // reserved “landing band” on the opposite wall
 
-  // Vertical speed (fast ramp)
+  // Vertical speed (fast ramp feel)
   const FALL_MIN    = 340;
   const FALL_MAX    = 800;
   const FALL_ACCEL  = 12.0;
-  const EXTRA_RAMP  = 0.010;             // time-based ramp
+  const EXTRA_RAMP  = 0.010; // extra time-based ramp
 
   // Jump
   const PUSH_V   = 980;
   const BOOST_V  = 1450;
   const BOOST_MS = 60;
 
-  // Pixels & geometry
+  // Pixel scale used across sprites
   const PIXEL_SCALE   = 2;
+
+  // Wall art (source)
   const WALL_SRC_W    = 26;
   const WALL_DISP_W   = WALL_SRC_W * PIXEL_SCALE;
 
-  // Spikes
+  // Spikes (24x12 source → display scaled by PIXEL_SCALE)
   const OB_SRC_W = 24, OB_SRC_H = 12;
   const OB_DISP_W = OB_SRC_W * PIXEL_SCALE, OB_DISP_H = OB_SRC_H * PIXEL_SCALE;
   const SPIKE_INSET_SRC = 2, SPIKE_INSET = SPIKE_INSET_SRC * PIXEL_SCALE;
 
-  // Audio
+  // AUDIO mapping & smoothing (tempo follows speed)
   const MUSIC_RATE_MIN = 1.00, MUSIC_RATE_MAX = 1.20;
   const MUSIC_VOLUME   = 0.60, MUSIC_SMOOTH   = 0.08;
 
@@ -126,13 +128,13 @@
       // Coin (16x16, 4 frames)
       this.load.spritesheet('coin', 'coin.png', { frameWidth: 16, frameHeight: 16 });
 
-      // Audio
+      // Music + SFX
       this.load.audio('bgm', ['NINJA.mp3']);
       this.load.audio('jumpSfx', 'jump.wav');
       this.load.audio('landSfx', 'land.wav');
-      this.load.audio('coinSfx', 'coin.wav'); // <-- coin pickup
+      this.load.audio('coinSfx', 'coin.wav'); // coin pickup sfx
 
-      // fallback obstacle
+      // fallback obstacle if asset missing
       const g = this.make.graphics({add:false});
       g.fillStyle(0xff4d4d,1); g.fillRect(0,0,OB_SRC_W,OB_SRC_H);
       g.generateTexture('obstacle_fallback',OB_SRC_W,OB_SRC_H); g.destroy();
@@ -143,14 +145,19 @@
       this.anims.create({ key:'slide', frames: this.anims.generateFrameNumbers('ninja', { start:0,  end:11 }), frameRate:18, repeat:-1 });
       this.anims.create({ key:'jump',  frames: this.anims.generateFrameNumbers('ninja', { start:12, end:15 }), frameRate:18, repeat:0  });
       this.anims.create({ key:'land',  frames: [{ key:'ninja', frame:16 }], frameRate:1, repeat:0 });
-      // Slower coin spin (8 fps)
+      // Slower coin spin
       this.anims.create({ key:'coinSpin', frames: this.anims.generateFrameNumbers('coin', { start: 0, end: 3 }), frameRate: 8, repeat: -1 });
 
-      // Physics world & rails
+      // Physics world
       this.physics.world.setBounds(0, 0, this.W, WORLD_H);
-      this.leftWallVis  = this.add.tileSprite(this.WALL_X.left,  WORLD_H/2, WALL_DISP_W, WORLD_H, 'wallTile').setOrigin(0.5).setDepth(0).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
-      this.rightWallVis = this.add.tileSprite(this.WALL_X.right, WORLD_H/2, WALL_DISP_W, WORLD_H, 'wallTile').setOrigin(0.5).setDepth(0).setFlipX(true).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
 
+      // Visual walls
+      this.leftWallVis  = this.add.tileSprite(this.WALL_X.left,  WORLD_H/2, WALL_DISP_W, WORLD_H, 'wallTile')
+        .setOrigin(0.5, 0.5).setDepth(0).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
+      this.rightWallVis = this.add.tileSprite(this.WALL_X.right, WORLD_H/2, WALL_DISP_W, WORLD_H, 'wallTile')
+        .setOrigin(0.5, 0.5).setDepth(0).setFlipX(true).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
+
+      // Physics rails
       this.add.graphics().generateTexture('rail1x1', 1, 1);
       this.leftRail  = this.physics.add.staticImage(this.WALL_X.left,  WORLD_H/2, 'rail1x1').setAlpha(0);
       this.rightRail = this.physics.add.staticImage(this.WALL_X.right, WORLD_H/2, 'rail1x1').setAlpha(0);
@@ -159,7 +166,8 @@
 
       // Player
       this.startY = Math.min(700, Math.max(420, this.H * 0.75));
-      this.player = this.physics.add.sprite(this.W/2, this.startY, 'ninja', 0).setDepth(2).setScale(PIXEL_SCALE);
+      this.player = this.physics.add.sprite(this.W/2, this.startY, 'ninja', 0).setDepth(2);
+      this.player.setScale(PIXEL_SCALE);
       this.player.body.setSize(20, 30, true);
       this.player.body.setOffset((24-20)/2, (34-30)/2);
 
@@ -167,32 +175,35 @@
       this.physics.world.gravity.y = 0;
       this.fallSpeed = FALL_MIN;
       this.elapsedRunMs = 0;
-      this.side = 'left'; this.onWall = true; this.alive = true;
-      this.playing = false; this.deathFall = false;
+      this.side = 'left';
+      this.onWall = true;
+      this.alive = true;
+      this.playing = false;
+      this.deathFall = false;
       this.score = 0; this.best = 0;
 
-      // Camera & HUD
+      // Camera
       this.cam = this.cameras.main;
-      this.cam.setBounds(0,0,this.W,WORLD_H).startFollow(this.player, true, 1, 1);
-      this.cam.setBackgroundColor('#101317'); this.cam.setRoundPixels(true);
-      this.scoreText = this.add.text(this.W/2, 50, '0', {fontSize:'48px', fontStyle:'800', color:'#fff'}).setOrigin(0.5).setScrollFactor(0).setDepth(10);
-      this.subText   = this.add.text(this.W/2, this.H-34, 'Tap to start', {fontSize:'16px', color:'#9aa3b2'}).setOrigin(0.5).setScrollFactor(0).setDepth(10);
+      this.cam.setBounds(0,0,this.W,WORLD_H);
+      this.cam.startFollow(this.player, true, 1, 1);
+      this.cam.setBackgroundColor('#101317');
+      this.cam.setRoundPixels(true);
+
+      // HUD
+      this.scoreText = this.add.text(this.W/2, 50, '0', {fontSize:'48px', fontStyle:'800', color:'#fff'})
+        .setOrigin(0.5).setScrollFactor(0).setDepth(10);
+      this.subText   = this.add.text(this.W/2, this.H-34, 'Tap to start', {fontSize:'16px', color:'#9aa3b2'})
+        .setOrigin(0.5).setScrollFactor(0).setDepth(10);
 
       // Obstacles
       this.obstacles = this.physics.add.group({ allowGravity:false, immovable:true });
       this.physics.add.overlap(this.player, this.obstacles, () => { if(this.playing) this.gameOver(); }, null, this);
 
-      // Coin
-      const centerX = () => (this.WALL_X.left + this.WALL_X.right) / 2;
-      this.coin = this.physics.add.sprite(centerX(), this.startY + 380, 'coin', 0).setScale(PIXEL_SCALE).setDepth(1);
-      this.coin.body.setAllowGravity(false);
-      this.coin.play('coinSpin');
-      this.physics.add.overlap(this.player, this.coin, () => this.collectCoin(), null, this);
-
-      // Coin SFX
+      // ---- AUDIO SETUP ----------
       const saved = (()=>{ try { return JSON.parse(localStorage.getItem('wj_audio')||'{}'); } catch(e){ return {}; } })();
       this.musicBaseVolume = (typeof saved.musicBaseVolume === 'number') ? saved.musicBaseVolume : MUSIC_VOLUME;
-      this.musicMuted = !!saved.musicMuted; this.sfxMuted = !!saved.sfxMuted;
+      this.musicMuted = !!saved.musicMuted;
+      this.sfxMuted   = !!saved.sfxMuted;
 
       this.music   = this.sound.add('bgm',     { loop: true, volume: this.musicBaseVolume, rate: MUSIC_RATE_MIN });
       this.jumpSfx = this.sound.add('jumpSfx', { volume: 0 });
@@ -203,19 +214,40 @@
         const musicVol = this.musicMuted ? 0 : this.musicBaseVolume;
         const sfxVol   = this.sfxMuted   ? 0 : (this.musicBaseVolume / 3);
         this.music.setVolume(musicVol);
-        this.jumpSfx.setVolume(sfxVol); this.landSfx.setVolume(sfxVol); this.coinSfx.setVolume(sfxVol);
-        try { localStorage.setItem('wj_audio', JSON.stringify({ musicBaseVolume:this.musicBaseVolume, musicMuted:this.musicMuted, sfxMuted:this.sfxMuted })); } catch(e){}
+        this.jumpSfx.setVolume(sfxVol);
+        this.landSfx.setVolume(sfxVol);
+        this.coinSfx.setVolume(sfxVol);
+        try {
+          localStorage.setItem('wj_audio', JSON.stringify({
+            musicBaseVolume: this.musicBaseVolume,
+            musicMuted: this.musicMuted,
+            sfxMuted: this.sfxMuted
+          }));
+        } catch(e){}
       };
       this.applyAudioSettings();
 
-      // Coin helpers
+      // ---- COIN SETUP ----
+      const centerX = () => (this.WALL_X.left + this.WALL_X.right) / 2;
+      this.coin = this.physics.add.sprite(centerX(), this.startY + 380, 'coin', 0)
+        .setScale(PIXEL_SCALE)
+        .setDepth(1);
+      this.coin.body.setAllowGravity(false);
+      this.coin.play('coinSpin');
+      // hide coin on start screen; we’ll show after grace
+      this.coin.setActive(false).setVisible(false);
+
+      // collect overlap
+      this.physics.add.overlap(this.player, this.coin, () => this.collectCoin(), null, this);
+
+      // coin placement helpers
       this.placeCoin = (y) => {
-        const sway = this.WALL_GAP * 0.15;
+        const sway = this.WALL_GAP * 0.15; // a bit of horizontal variety
         const x = Math.round(Phaser.Math.Clamp(centerX() + Phaser.Math.Between(-sway, sway), this.WALL_X.left + 28, this.WALL_X.right - 28));
         this.coin.setPosition(x, Math.round(y)).setActive(true).setVisible(true);
       };
       this.advanceCoin = () => {
-        // distance scales with speed
+        // Distance scales with speed: faster → a bit closer so you see more coins
         const t = Phaser.Math.Clamp((this.fallSpeed - FALL_MIN)/(FALL_MAX - FALL_MIN), 0, 1);
         const minAhead = Phaser.Math.Linear(580, 420, t);
         const maxAhead = Phaser.Math.Linear(920, 680, t);
@@ -223,15 +255,23 @@
         this.placeCoin(this.player.y + ahead);
       };
 
+      // Helpers
+      this.updateFacing = () => this.player.setFlipX(this.side === 'right');
+      this.playSlide  = () => this.player.anims.play('slide', true);
+      this.playJump   = () => this.player.anims.play('jump',  true);
+
       // Rail contact handler (land)
       const contact = (_player, rail) => {
         if (!this.alive || !this.playing) return;
         const which = (rail === this.leftRail) ? 'left' : 'right';
         if (!this.onWall){
-          this.onWall = true; this.side = which;
+          this.onWall = true;
+          this.side = which;
           this.player.setVelocity(0, this.fallSpeed);
           this.score += 1; this.scoreText.setText(this.score);
-          this.updateFacing(); this.player.anims.play('land', true); this.landSfx.play();
+          this.updateFacing();
+          this.player.anims.play('land', true);
+          this.landSfx.play();
           this.time.delayedCall(80, () => { if (this.onWall && this.alive) this.playSlide(); });
         } else {
           this.player.setVelocityX(0);
@@ -243,65 +283,74 @@
       // Input
       this.input.on('pointerdown', () => this.jump());
 
-      // Spawner
+      // Spawner (spacing tightens with speed)
       this.spacingBaseMin = 210;
       this.spacingBaseMax = 300;
       this.nextSpawnY = this.startY + 220;
       this.lastSide = 'right';
       this.lastY = this.startY;
-      this.lastSpikeY = { left: -99999, right: -99999 };
-      this.forbiddenBand = { left: null, right: null }; // keep opposite landing zone clean
+      this.lastSpikeY = { left: -99999, right: -99999 }; // track last spike per side
+      this.forbiddenBand = { left: null, right: null };   // “landing band” blocked on opposite wall
 
       this.spawnTimer = this.time.addEvent({ delay: 60, loop: true, paused: true, callback: () => this.spawnAhead() });
 
       // Start overlay & initial placement
       this.showStartOverlay();
-      this.snapToWall('left', this.startY, { stationary:true });
-      this.player.setVelocity(0,0);
 
       // Resize
       this.scale.on('resize', (gameSize) => this.onResize(gameSize));
 
-      // Pause/resume audio on blur/focus
-      this.game.events.on(Phaser.Core.Events.BLUR,  () => { if (this.music && this.music.isPlaying) this.music.pause(); });
+      // Optional: pause/resume audio on blur/focus
+      this.game.events.on(Phaser.Core.Events.BLUR, () => { if (this.music && this.music.isPlaying) this.music.pause(); });
       this.game.events.on(Phaser.Core.Events.FOCUS, () => { if (this.playing && this.music && this.music.isPaused) this.music.resume(); });
     }
 
-    // Helpers
-    get Wgap(){ return this.WALL_GAP; }
+    // --- Wall geometry helpers ---
     innerEdgeX(which){
       const rail = (which === 'left') ? this.leftRail : this.rightRail;
       return rail.x + ((which === 'left') ? rail.body.halfWidth : -rail.body.halfWidth);
     }
     playerHalfWidth(){ return this.player?.body ? this.player.body.halfWidth : (this.player.displayWidth * 0.5); }
-    updateFacing = () => this.player.setFlipX(this.side === 'right');
-    playSlide  = () => this.player.anims.play('slide', true);
-    playJump   = () => this.player.anims.play('jump',  true);
 
     snapToWall(which, yOverride = null, { stationary = false } = {}){
-      this.onWall = true; this.side = which;
+      this.onWall = true;
+      this.side = which;
+
       const edge  = this.innerEdgeX(which);
       const pHalf = this.playerHalfWidth();
       let x = (which === 'left') ? (edge + pHalf) : (edge - pHalf);
       x = Math.round(x);
+
       if (yOverride !== null) this.player.setY(yOverride);
       this.player.setX(x);
+
       this.player.setVelocity(0, stationary ? 0 : this.fallSpeed);
-      this.updateFacing(); this.playSlide();
+
+      this.updateFacing();
+      this.playSlide();
     }
 
+    // ------- UI helpers (Start overlay toggles) -------
     makeToggleButton(opts){
       const { x, y, label, getOn, onToggle } = opts;
       const group = this.add.container(x, y).setScrollFactor(0).setDepth(1001);
       const bg = this.add.rectangle(0, 0, 180, 40, 0x1c222b, 0.9).setOrigin(0.5).setStrokeStyle(2, 0x344053);
       const txt = this.add.text(0, 0, '', { fontSize:'16px', color:'#e5eefc' }).setOrigin(0.5);
-      const refresh = () => { const isOn = getOn(); txt.setText(`${label}: ${isOn ? 'On' : 'Off'}`); bg.setFillStyle(isOn ? 0x223040 : 0x282a33, 0.95); };
+      const refresh = () => {
+        const isOn = getOn();
+        txt.setText(`${label}: ${isOn ? 'On' : 'Off'}`);
+        bg.setFillStyle(isOn ? 0x223040 : 0x282a33, 0.95);
+      };
       refresh();
+
       const hit = this.add.zone(0,0,180,40).setOrigin(0.5).setInteractive({ useHandCursor:true });
       hit.on('pointerdown', () => { onToggle(); refresh(); this.applyAudioSettings(); });
-      group.add([bg, txt, hit]); return { group, refresh };
+
+      group.add([bg, txt, hit]);
+      return { group, refresh };
     }
 
+    // Overlays
     showStartOverlay(){
       this.hideGameOverOverlay();
       if (this.overlayStart) this.overlayStart.destroy();
@@ -311,6 +360,7 @@
       this.obstacles.clear(true,true);
       this.spawnTimer.paused = true;
 
+      // camera positioning
       this.cam.stopFollow(); this.cam.setBounds(0,0,this.W,WORLD_H);
       this.cam.setScroll(0, Math.max(0, this.startY - this.H*0.5));
       this.cam.startFollow(this.player, true, 1, 1);
@@ -318,17 +368,23 @@
       this.subText.setText('Tap to start').setVisible(true);
 
       this.overlayStart = this.add.container(0,0).setScrollFactor(0).setDepth(1000);
-      const dim = this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({ useHandCursor:true });
+      const dim = this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45)
+        .setInteractive({ useHandCursor:true });
       const title = this.add.text(this.W/2, this.H*0.30, 'WALL JUMPER', {fontSize:'40px', fontStyle:'800', color:'#ffffff'}).setOrigin(0.5);
-      const instr = this.add.text(this.W/2, this.H*0.40, 'Tap anywhere to start\nSlide for a second, then avoid the hazards', {fontSize:'18px', color:'#b7c0cf', align:'center'}).setOrigin(0.5);
+      const instr = this.add.text(this.W/2, this.H*0.40, 'Tap to start\nSlide for a second, then avoid the hazards', {fontSize:'18px', color:'#b7c0cf', align:'center'}).setOrigin(0.5);
+      this.overlayStart.add([dim,title,instr]);
 
-      const musicToggle = this.makeToggleButton({ x: this.W/2 - 95, y: this.H*0.55, label:'Music', getOn:()=>!this.musicMuted, onToggle:()=>{this.musicMuted=!this.musicMuted;} });
-      const sfxToggle   = this.makeToggleButton({ x: this.W/2 + 95, y: this.H*0.55, label:'SFX',   getOn:()=>!this.sfxMuted,   onToggle:()=>{this.sfxMuted=!this.sfxMuted;} });
-      this.overlayStart.add([dim,title,instr, musicToggle.group, sfxToggle.group]);
+      // Hide coin during start screen
+      if (this.coin) this.coin.setActive(false).setVisible(false);
 
+      // freeze player at start
       this.snapToWall('left', this.startY, { stationary:true });
       this.player.setVelocity(0,0);
-      this.input.once('pointerdown', () => this.startGame(), this);
+
+      const start = () => this.startGame();
+      // listen on both scene and overlay for robustness (mobile Safari quirks)
+      this.input.once('pointerdown', start, this);
+      dim.once('pointerdown', start);
     }
     hideStartOverlay(){ if (this.overlayStart){ this.overlayStart.destroy(); this.overlayStart = null; } }
     hideGameOverOverlay(){ if (this.overlayGameOver){ this.overlayGameOver.destroy(); this.overlayGameOver = null; } }
@@ -336,7 +392,9 @@
     showGameOverOverlay(){
       this.hideStartOverlay();
       if (this.overlayGameOver) this.overlayGameOver.destroy();
+
       this.playing = false; this.spawnTimer.paused = true;
+
       if (this.music && this.music.isPlaying) this.music.stop();
 
       this.overlayGameOver = this.add.container(0,0).setScrollFactor(0).setDepth(1000);
@@ -349,6 +407,7 @@
       this.input.once('pointerdown', () => this.restart(), this);
     }
 
+    // Flow
     startGame(){
       this.hideStartOverlay();
       if (this.colLeft)  this.colLeft.active = true;
@@ -364,31 +423,44 @@
       this.score = 0; this.scoreText.setText('0');
       this.subText.setText('Tap to jump').setVisible(true);
       this.fallSpeed = FALL_MIN; this.elapsedRunMs = 0;
-      this.obstacles.clear(true,true); this.player.clearTint();
+      this.obstacles.clear(true,true);
+      this.player.clearTint();
 
+      // start falling now
       this.snapToWall('left', this.startY, { stationary:false });
 
-      // After-grace: force first spawn just below the camera bottom so they rise into frame
+      // Force first objects to appear from below AFTER the camera is locked
       const bottom = this.cam.scrollY + this.H;
-      this.nextSpawnY = bottom + 80;      // first spikes start off-screen
-      this.lastSide = 'right'; this.lastY = this.startY;
+      this.nextSpawnY = bottom + 80; // first spikes off-screen
+      this.lastSide = 'right';
+      this.lastY = this.startY;
       this.lastSpikeY = { left: -99999, right: -99999 };
       this.forbiddenBand = { left: null, right: null };
 
-      // Place first coin off-screen too
-      this.placeCoin(bottom + 140);
+      // keep coin hidden until grace ends
+      this.coin.setActive(false).setVisible(false);
 
-      this.alive = true; this.deathFall = false; this.playing = true;
+      this.alive = true;
+      this.deathFall = false;
+      this.playing = true;
 
-      this.cam.rotation = 0; this.cam.setBounds(0,0,this.W,WORLD_H);
+      this.cam.rotation = 0;
+      this.cam.setBounds(0,0,this.W,WORLD_H);
       this.cam.startFollow(this.player, true, 1, 1);
 
-      // Start spawning only after grace
-      this.time.delayedCall(GRACE_START_MS, () => { if (this.alive) this.spawnTimer.paused = false; });
+      // Begin spawning AFTER grace; also place coin off-screen then
+      this.time.delayedCall(GRACE_START_MS, () => {
+        if (!this.alive) return;
+        const b = this.cam.scrollY + this.H;
+        this.placeCoin(b + 140);                 // coin rises into frame
+        this.coin.setActive(true).setVisible(true);
+        this.spawnTimer.paused = false;
+      });
     }
 
     restart(){ this.hideGameOverOverlay(); this.startGame(); }
 
+    // Jump
     jump(){
       if (!this.playing) return;
       if (!this.alive){ this.restart(); return; }
@@ -396,12 +468,18 @@
 
       const dir = (this.side==='left') ? 1 : -1;
       this.player.setVelocity(dir*BOOST_V, this.fallSpeed);
-      this.onWall = false; this.subText.setVisible(false);
-      this.playJump(); this.jumpSfx.play();
+      this.onWall = false;
+      this.subText.setVisible(false);
 
-      this.time.delayedCall(BOOST_MS, () => { if (!this.onWall && this.alive){ this.player.setVelocity(dir*PUSH_V, this.fallSpeed); } });
+      this.playJump();
+      this.jumpSfx.play();
+
+      this.time.delayedCall(BOOST_MS, () => {
+        if (!this.onWall && this.alive){ this.player.setVelocity(dir*PUSH_V, this.fallSpeed); }
+      });
     }
 
+    // spacing now tightens moderately as speed rises
     getCurrentSpacing(){
       const t = Phaser.Math.Clamp((this.fallSpeed - FALL_MIN)/(FALL_MAX - FALL_MIN), 0, 1);
       const min = Phaser.Math.Linear(this.spacingBaseMin, this.spacingBaseMin + 40, t);
@@ -409,23 +487,19 @@
       return { min, max };
     }
 
+    // --- Safety helpers: guarantee a path & safe landing zone ---
     canPlace(side, y){
-      // Keep a clear vertical window vs last spike on the opposite wall
       const other = (side === 'left') ? 'right' : 'left';
       const okWindow = Math.abs(y - this.lastSpikeY[other]) >= CLEAR_WINDOW;
-      // Keep “landing zone” on this side clear (set when a spike was placed on the other side)
       const band = this.forbiddenBand[side];
       const okBand = !band || y < band.min || y > band.max;
       return okWindow && okBand;
     }
-
     adjustForSafety(side, y){
       const other = (side === 'left') ? 'right' : 'left';
-      // Nudge relative to the opposite wall's last spike
       if (Math.abs(y - this.lastSpikeY[other]) < CLEAR_WINDOW) {
         y = this.lastSpikeY[other] + (y >= this.lastSpikeY[other] ? CLEAR_WINDOW : -CLEAR_WINDOW);
       }
-      // Nudge out of landing band if needed
       const band = this.forbiddenBand[side];
       if (band && y >= band.min && y <= band.max) {
         y = band.max + 12;
@@ -433,9 +507,9 @@
       return y;
     }
 
+    // Spawn spikes with variety while enforcing safety
     spawnAhead(){
       if (!this.playing || !this.alive) return;
-
       const bufferAhead = 1100;
       const camY = this.player.y;
       const { min:curMin, max:curMax } = this.getCurrentSpacing();
@@ -466,10 +540,9 @@
         this.nextSpawnY = y + Phaser.Math.Between(curMin|0, curMax|0);
         this.lastY = y; this.lastSide = side;
 
-        // Occasionally place coin near hazard as a tease
+        // Occasionally tease a coin near hazards; ensure it rises into frame
         if (Math.random() < 0.20 && this.coin && this.coin.active) {
           const bottom = this.cam.scrollY + this.H;
-          // ensure “comes into frame”: if suggested y is above bottom+60, push farther
           const yy = Math.max(bottom + 60, y + Phaser.Math.Between(80, 160));
           this.placeCoin(yy);
         }
@@ -499,38 +572,59 @@
       ob.setImmovable(true);
       ob.setVelocity(0, 0);
 
-      // Record for spacing & set landing-forbidden band on the opposite wall
+      // remember last spike y for gap safety
       this.lastSpikeY[side] = y;
+      // reserve a “landing band” on the opposite wall so a cross-jump is always safe
       const other = (side === 'left') ? 'right' : 'left';
       this.forbiddenBand[other] = { min: y - CROSS_SAFE_BAND/2, max: y + CROSS_SAFE_BAND/2 };
+
       return ob;
     }
 
-    // Coin pickup
+    // ---- COIN PICKUP ----
     collectCoin(){
       if (!this.playing || !this.alive || !this.coin.active) return;
-      this.score += 5; this.scoreText.setText(this.score);
-      if (this.coinSfx) this.coinSfx.play();
-      const pop = this.add.text(this.coin.x, this.coin.y - 10, '+5', { fontSize:'16px', color:'#ffd54a' }).setDepth(5).setOrigin(0.5);
-      this.tweens.add({ targets: pop, y: pop.y - 24, alpha: 0, duration: 420, ease: 'Quad.Out', onComplete: () => pop.destroy() });
+
+      // Score +5
+      this.score += 5;
+      this.scoreText.setText(this.score);
+
+      // SFX
+      this.coinSfx && this.coinSfx.play();
+
+      // Little pop & +5 text
+      const pop = this.add.text(this.coin.x, this.coin.y - 10, '+5', { fontSize:'16px', color:'#ffd54a' }).setDepth(5);
+      pop.setScale(1).setOrigin(0.5);
+      this.tweens.add({
+        targets: pop,
+        y: pop.y - 24, alpha: 0,
+        duration: 420, ease: 'Quad.Out',
+        onComplete: () => pop.destroy()
+      });
+
+      // Hide coin and respawn ahead
       this.coin.setActive(false).setVisible(false);
       this.time.delayedCall(150, () => this.advanceCoin());
     }
 
     update(_time, dt){
       if (this.alive){
+        // Base ramp + light time-based ramp (feels more “notable”)
         this.elapsedRunMs += dt || 0;
-        const timeBoost = (this.elapsedRunMs * EXTRA_RAMP) / 1000;
+        const timeBoost = (this.elapsedRunMs * EXTRA_RAMP) / 1000; // scaled
         this.fallSpeed = Math.min(FALL_MAX, this.fallSpeed + (FALL_ACCEL + timeBoost) * (dt/1000));
         if (this.player.body) this.player.setVelocityY(this.fallSpeed);
       } else if (this.deathFall){
         if (this.player.body) this.player.setVelocity(0, 900);
         const bottomThreshold = this.cam.scrollY + this.H + 120;
-        if (!this.overlayGameOver && this.player.y > bottomThreshold){ this.deathFall = false; this.showGameOverOverlay(); }
+        if (!this.overlayGameOver && this.player.y > bottomThreshold){
+          this.deathFall = false;
+          this.showGameOverOverlay();
+        }
       }
       if (this.playing && this.alive && this.player.y > WORLD_H - 200){ this.gameOver(); }
 
-      // Lock spikes to walls
+      // Keep spikes locked to wall each frame
       this.obstacles.children.iterate(ob => {
         if (!ob || !ob.active) return;
         const side = ob.getData('side');
@@ -539,19 +633,20 @@
         const targetX = (side === 'left') ? Math.round(edge + half - SPIKE_INSET)
                                           : Math.round(edge - half + SPIKE_INSET);
         if (ob.x !== targetX) { ob.x = targetX; ob.body.updateFromGameObject(); }
-        ob.setFlipX(side === 'left'); ob.setVelocityX(0);
+        ob.setFlipX(side === 'left');
+        ob.setVelocityX(0);
       });
 
-      // COIN: allow full bottom->top travel before respawn
+      // COIN: let it pass fully bottom->top before respawn
       if (this.coin && this.coin.active) {
-        const topGone = this.cameras.main.scrollY - (this.H + 80);
-        if (this.coin.y < topGone) { // fully above view
+        const topFullyGone = this.cameras.main.scrollY - (this.H + 80);
+        if (this.coin.y < topFullyGone) {
           this.coin.setActive(false).setVisible(false);
           this.advanceCoin();
         }
       }
 
-      // Music tempo
+      // AUDIO: ramp music tempo with fall speed (eased + smoothed)
       if (this.music && this.music.isPlaying) {
         const t = Phaser.Math.Clamp((this.fallSpeed - FALL_MIN)/(FALL_MAX - FALL_MIN), 0, 1);
         const eased = Phaser.Math.Easing.Quadratic.Out(t);
@@ -571,9 +666,12 @@
       if (this.colLeft)  this.colLeft.active = false;
       if (this.colRight) this.colRight.active = false;
       this.cam.stopFollow();
-      this.onWall = false; this.deathFall = true;
+      this.onWall = false;
+      this.deathFall = true;
       this.player.setVelocity(0, 900);
+
       if (this.music && this.music.isPlaying) this.music.stop();
+
       this.showGameOverOverlay();
     }
 
@@ -587,9 +685,9 @@
       this.leftWallVis.setPosition(this.WALL_X.left, WORLD_H/2).setSize(WALL_DISP_W, WORLD_H).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
       this.rightWallVis.setPosition(this.WALL_X.right, WORLD_H/2).setSize(WALL_DISP_W, WORLD_H).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
 
-      if (this.onWall) this.snapToWall(this.side, null, { stationary: !this.playing });
+      if (this.onWall) this.snapToWall(this.side, null, { stationary: !this.playing }); // keep exact alignment
 
-      // keep coin inside gap if visible
+      // keep coin inside current gap if visible
       if (this.coin && this.coin.active) {
         const minX = this.WALL_X.left + 28, maxX = this.WALL_X.right - 28;
         this.coin.x = Math.round(Phaser.Math.Clamp(this.coin.x, minX, maxX));
