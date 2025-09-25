@@ -12,60 +12,42 @@
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
       overflow: hidden;
     }
-    .shell {
-      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-    }
-    .stage {
-      width: min(100vw, 600px); height: 100%;
-      display: flex; align-items: center; justify-content: center;
-    }
-    #game-root canvas {
+    .shell { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+    .stage { width: min(100vw, 600px); height: 100%; display: flex; align-items: center; justify-content: center; }
+    #game-root canvas{
       display:block; width:100%; height:100%;
-      image-rendering: pixelated;
-      image-rendering: crisp-edges;
-      touch-action: manipulation;
+      image-rendering: pixelated; image-rendering: crisp-edges; touch-action: manipulation;
     }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
 </head>
 <body>
-  <div class="shell">
-    <div class="stage">
-      <div id="game-root" style="width:100%;height:100%;"></div>
-    </div>
-  </div>
+  <div class="shell"><div class="stage"><div id="game-root" style="width:100%;height:100%;"></div></div></div>
 
 <script>
 (() => {
-  // ------------------------
-  // Global Tunables / Flags
-  // ------------------------
-  const TEST_BG       = false;            // set true for yellow test background
+  const TEST_BG       = false; // set true for yellow test background
   const WORLD_H       = 100000;
   const FALL_MIN      = 300, FALL_MAX = 520, FALL_ACCEL = 6.0;
   const PUSH_V        = 980;
   const BOOST_V       = 1450;
   const BOOST_MS      = 60;
 
-  // Unified pixel scaling (apply to ALL art)
   const PIXEL_SCALE   = 2;
 
-  // Assets source sizes
-  const WALL_SRC_W    = 26;               // wall.png is 26px wide tile
-  const OB_SRC_W = 24, OB_SRC_H = 12;     // spike sprite
-  const SPIKE_INSET_SRC = 2;              // sink spikes slightly into walls
+  const WALL_SRC_W    = 26;
+  const OB_SRC_W = 24, OB_SRC_H = 12;
+  const SPIKE_INSET_SRC = 2;
   const NINJA_FRAME_W = 24, NINJA_FRAME_H = 34;
   const COIN_FRAME    = 16;
-  const GRAD_SRC_W    = 54, GRAD_SRC_H = 104; // gradiant.png
+  const GRAD_SRC_W    = 54, GRAD_SRC_H = 104;
 
-  // Derived (display) sizes
   const WALL_DISP_W   = WALL_SRC_W * PIXEL_SCALE;
   const OB_DISP_W     = OB_SRC_W   * PIXEL_SCALE;
   const OB_DISP_H     = OB_SRC_H   * PIXEL_SCALE;
   const SPIKE_INSET   = SPIKE_INSET_SRC * PIXEL_SCALE;
   const GRAD_DISP_W   = GRAD_SRC_W * PIXEL_SCALE;
 
-  // Audio feel
   const MUSIC_RATE_MIN = 1.00;
   const MUSIC_RATE_MAX = 1.12;
   const MUSIC_VOLUME   = 0.60;
@@ -76,576 +58,349 @@
     get W(){ return this.scale.width; }
     get H(){ return this.scale.height; }
     get WALL_GAP(){ return Math.max(120, Math.min(this.W * 0.75, this.W - 60)); }
-    get WALL_X(){
-      const left  = (this.W - this.WALL_GAP)/2;
-      const right = (this.W + this.WALL_GAP)/2;
-      return { left, right };
-    }
+    get WALL_X(){ const l=(this.W - this.WALL_GAP)/2, r=(this.W + this.WALL_GAP)/2; return {left:l,right:r}; }
 
     preload(){
-      // Core art
       this.load.spritesheet('ninja', 'ninja_sheet.png', { frameWidth: NINJA_FRAME_W, frameHeight: NINJA_FRAME_H });
-      this.load.image('wallTile', 'wall.png');     // 26px wide column tile
-      this.load.image('obstacle', 'spike.png');    // 24×12
+      this.load.image('wallTile', 'wall.png');
+      this.load.image('obstacle', 'spike.png');
       this.load.spritesheet('coin', 'coin.png', { frameWidth: COIN_FRAME, frameHeight: COIN_FRAME });
-
-      // Gradient strips between walls
       this.load.image('wallGrad', 'gradiant.png'); // 54×104
 
-      // Audio
       this.load.audio('bgm', ['NINJA.mp3']);
       this.load.audio('jumpSfx', 'jump.wav');
       this.load.audio('landSfx', 'land.wav');
 
-      // ---- FALLBACKS ----
-      // Obstacle fallback (red slab)
-      const g1 = this.make.graphics({ add:false });
-      g1.fillStyle(0xff4d4d,1).fillRect(0,0,OB_SRC_W,OB_SRC_H);
-      g1.generateTexture('obstacle_fallback',OB_SRC_W,OB_SRC_H);
-      g1.destroy();
-
-      // Wall fallback (26×256)
-      const W = WALL_SRC_W, H = 256;
-      const g2 = this.make.graphics({ add:false });
-      g2.fillStyle(0x2a2f3a,1).fillRect(0,0,W,H);         // base
-      g2.lineStyle(1,0x3a4250,1);
-      for (let y=0; y<H; y+=8) g2.strokeLineShape(new Phaser.Geom.Line(0,y,W,y));
-      g2.generateTexture('wall_fallback', W, H);
-      g2.destroy();
+      // fallbacks
+      const g1=this.make.graphics({add:false}); g1.fillStyle(0xff4d4d,1).fillRect(0,0,OB_SRC_W,OB_SRC_H);
+      g1.generateTexture('obstacle_fallback',OB_SRC_W,OB_SRC_H); g1.destroy();
+      const W=WALL_SRC_W,H=256,g2=this.make.graphics({add:false});
+      g2.fillStyle(0x2a2f3a,1).fillRect(0,0,W,H); g2.lineStyle(1,0x3a4250,1);
+      for(let y=0;y<H;y+=8) g2.strokeLineShape(new Phaser.Geom.Line(0,y,W,y));
+      g2.generateTexture('wall_fallback',W,H); g2.destroy();
     }
 
     create(){
-      // Animations
-      this.anims.create({ key:'slide', frames: this.anims.generateFrameNumbers('ninja', { start:0,  end:11 }), frameRate:18, repeat:-1 });
-      this.anims.create({ key:'jump',  frames: this.anims.generateFrameNumbers('ninja', { start:12, end:15 }), frameRate:18, repeat:0  });
-      this.anims.create({ key:'land',  frames: [{ key:'ninja', frame:16 }], frameRate:1, repeat:0 });
-      this.anims.create({ key:'coinSpin', frames: this.anims.generateFrameNumbers('coin', { start: 0, end: 3 }), frameRate: 8, repeat: -1 });
+      // anims
+      this.anims.create({ key:'slide', frames:this.anims.generateFrameNumbers('ninja',{start:0,end:11}), frameRate:18, repeat:-1 });
+      this.anims.create({ key:'jump',  frames:this.anims.generateFrameNumbers('ninja',{start:12,end:15}), frameRate:18, repeat:0  });
+      this.anims.create({ key:'land',  frames:[{key:'ninja',frame:16}], frameRate:1, repeat:0 });
+      this.anims.create({ key:'coinSpin', frames:this.anims.generateFrameNumbers('coin',{start:0,end:3}), frameRate:8, repeat:-1 });
 
-      // Physics world & camera
-      this.physics.world.setBounds(0, 0, this.W, WORLD_H);
-      this.cam = this.cameras.main;
-      this.cam.setBounds(0,0,this.W,WORLD_H);
-      this.cam.setBackgroundColor(TEST_BG ? '#ffff00' : '#101317');
-      this.cam.setRoundPixels(true);
+      // world/cam
+      this.physics.world.setBounds(0,0,this.W,WORLD_H);
+      this.cam=this.cameras.main; this.cam.setBounds(0,0,this.W,WORLD_H);
+      this.cam.setBackgroundColor(TEST_BG?'#ffff00':'#101317'); this.cam.setRoundPixels(true);
 
-      // --- WALLS ---
-      const wallKey = this.textures.exists('wallTile') ? 'wallTile' : 'wall_fallback';
-      this.leftWallVis  = this.add.tileSprite(this.WALL_X.left,  WORLD_H/2, WALL_DISP_W, WORLD_H, wallKey)
-        .setOrigin(0.5).setDepth(0).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
-      this.rightWallVis = this.add.tileSprite(this.WALL_X.right, WORLD_H/2, WALL_DISP_W, WORLD_H, wallKey)
-        .setOrigin(0.5).setDepth(0).setFlipX(true).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
+      // walls
+      const wallKey=this.textures.exists('wallTile')?'wallTile':'wall_fallback';
+      this.leftWallVis = this.add.tileSprite(this.WALL_X.left, WORLD_H/2, WALL_DISP_W, WORLD_H, wallKey)
+        .setOrigin(0.5).setDepth(0).setTileScale(PIXEL_SCALE,PIXEL_SCALE);
+      this.rightWallVis= this.add.tileSprite(this.WALL_X.right,WORLD_H/2, WALL_DISP_W, WORLD_H, wallKey)
+        .setOrigin(0.5).setDepth(0).setFlipX(true).setTileScale(PIXEL_SCALE,PIXEL_SCALE);
 
-      // --- RAILS (physics) ---
-      this.add.graphics().generateTexture('rail1x1', 1, 1);
-      this.leftRail  = this.physics.add.staticImage(this.WALL_X.left,  WORLD_H/2, 'rail1x1').setAlpha(0);
-      this.rightRail = this.physics.add.staticImage(this.WALL_X.right, WORLD_H/2, 'rail1x1').setAlpha(0);
-      this.leftRail.setDisplaySize(WALL_DISP_W, WORLD_H).refreshBody();
-      this.rightRail.setDisplaySize(WALL_DISP_W, WORLD_H).refreshBody();
+      // rails
+      this.add.graphics().generateTexture('rail1x1',1,1);
+      this.leftRail  = this.physics.add.staticImage(this.WALL_X.left, WORLD_H/2,'rail1x1').setAlpha(0);
+      this.rightRail = this.physics.add.staticImage(this.WALL_X.right,WORLD_H/2,'rail1x1').setAlpha(0);
+      this.leftRail.setDisplaySize(WALL_DISP_W,WORLD_H).refreshBody();
+      this.rightRail.setDisplaySize(WALL_DISP_W,WORLD_H).refreshBody();
 
-      // --- GRADIENT STRIPS (behind ninja/spikes, inside walls) ---
+      // gradients (flip BOTH horizontally)
       const leftInner  = this.innerEdgeX('left');
       const rightInner = this.innerEdgeX('right');
+      this.leftGrad = this.add.tileSprite(Math.round(leftInner + GRAD_DISP_W/2), WORLD_H/2, GRAD_DISP_W, WORLD_H, 'wallGrad')
+        .setOrigin(0.5).setDepth(0).setTileScale(PIXEL_SCALE,PIXEL_SCALE).setFlipX(true);
+      this.rightGrad = this.add.tileSprite(Math.round(rightInner - GRAD_DISP_W/2), WORLD_H/2, GRAD_DISP_W, WORLD_H, 'wallGrad')
+        .setOrigin(0.5).setDepth(0).setTileScale(PIXEL_SCALE,PIXEL_SCALE).setFlipX(true);
 
-      this.leftGrad = this.add.tileSprite(
-        Math.round(leftInner + GRAD_DISP_W/2), WORLD_H/2, GRAD_DISP_W, WORLD_H, 'wallGrad'
-      ).setOrigin(0.5).setDepth(0).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
+      // player
+      this.startY=Math.min(700,Math.max(420,this.H*0.75));
+      this.player=this.physics.add.sprite(this.W/2,this.startY,'ninja',0).setDepth(2).setScale(PIXEL_SCALE);
+      this.player.body.setSize(20,30,true);
+      this.player.body.setOffset((NINJA_FRAME_W-20)/2,(NINJA_FRAME_H-30)/2);
 
-      this.rightGrad = this.add.tileSprite(
-        Math.round(rightInner - GRAD_DISP_W/2), WORLD_H/2, GRAD_DISP_W, WORLD_H, 'wallGrad'
-      ).setOrigin(0.5).setDepth(0).setFlipX(true).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
+      // state
+      this.physics.world.gravity.y=0;
+      this.fallSpeed=FALL_MIN; this.side='left'; this.onWall=true;
+      this.alive=true; this.playing=false; this.deathFall=false;
+      this.score=0; this.best=0;
 
-      // --- PLAYER ---
-      this.startY = Math.min(700, Math.max(420, this.H * 0.75));
-      this.player = this.physics.add.sprite(this.W/2, this.startY, 'ninja', 0)
-        .setDepth(2)
-        .setScale(PIXEL_SCALE);
-      this.player.body.setSize(20, 30, true);
-      this.player.body.setOffset((NINJA_FRAME_W-20)/2, (NINJA_FRAME_H-30)/2);
-
-      // State
-      this.physics.world.gravity.y = 0;
-      this.fallSpeed = FALL_MIN;
-      this.side = 'left';
-      this.onWall = true;
-      this.alive = true;
-      this.playing = false;
-      this.deathFall = false;
-      this.score = 0; this.best = 0;
-
-      // Camera follow
-      this.cam.startFollow(this.player, true, 1, 1);
+      // follow
+      this.cam.startFollow(this.player,true,1,1);
 
       // HUD
-      this.scoreText = this.add.text(this.W/2, 50, '0', {
-        fontSize:'48px', fontStyle:'800', color: TEST_BG ? '#000' : '#fff'
-      }).setOrigin(0.5).setScrollFactor(0).setDepth(10);
-      this.subText   = this.add.text(this.W/2, this.H-34, 'Tap to start', {
-        fontSize:'16px', color: TEST_BG ? '#333' : '#9aa3b2'
-      }).setOrigin(0.5).setScrollFactor(0).setDepth(10);
+      this.scoreText=this.add.text(this.W/2,50,'0',{fontSize:'48px',fontStyle:'800',color:TEST_BG?'#000':'#fff'})
+        .setOrigin(0.5).setScrollFactor(0).setDepth(10);
+      this.subText=this.add.text(this.W/2,this.H-34,'Tap to start',{fontSize:'16px',color:TEST_BG?'#333':'#9aa3b2'})
+        .setOrigin(0.5).setScrollFactor(0).setDepth(10);
 
-      // Obstacles group
-      this.obstacles = this.physics.add.group({ allowGravity:false, immovable:true });
-      this.physics.add.overlap(this.player, this.obstacles, () => { if(this.playing) this.gameOver(); }, null, this);
+      // obstacles
+      this.obstacles=this.physics.add.group({allowGravity:false,immovable:true});
+      this.physics.add.overlap(this.player,this.obstacles,()=>{ if(this.playing) this.gameOver(); },null,this);
 
-      // Coin
-      const midX = () => (this.WALL_X.left + this.WALL_X.right) / 2;
-      this.coin = this.physics.add.sprite(midX(), this.startY + 360, 'coin', 0)
-        .setScale(PIXEL_SCALE)
-        .setDepth(1);
-      this.coin.body.setAllowGravity(false);
-      this.coin.play('coinSpin');
-      this.physics.add.overlap(this.player, this.coin, () => this.collectCoin(), null, this);
+      // coin
+      const midX=()=> (this.WALL_X.left + this.WALL_X.right)/2;
+      this.coin=this.physics.add.sprite(midX(),this.startY+360,'coin',0).setScale(PIXEL_SCALE).setDepth(1);
+      this.coin.body.setAllowGravity(false); this.coin.play('coinSpin');
+      this.physics.add.overlap(this.player,this.coin,()=>this.collectCoin(),null,this);
+      this.placeCoin=(y)=>{ this.coin.setX(Math.round(midX())); this.coin.setY(Math.round(y)); this.coin.setActive(true).setVisible(true); };
+      this.advanceCoin=()=>{ const ahead=Phaser.Math.Between(520,820); this.placeCoin(this.player.y+ahead); };
 
-      this.placeCoin = (y) => {
-        this.coin.setX(Math.round(midX()));
-        this.coin.setY(Math.round(y));
-        this.coin.setActive(true).setVisible(true);
-      };
-      this.advanceCoin = () => {
-        const ahead = Phaser.Math.Between(520, 820);
-        this.placeCoin(this.player.y + ahead);
-      };
+      // helpers
+      this.updateFacing=()=>{ this.player.setFlipX(this.side==='right'); };
+      this.playSlide =()=> this.player.anims.play('slide',true);
+      this.playJump  =()=> this.player.anims.play('jump',true);
 
-      // Helpers
-      this.updateFacing = () => { this.player.setFlipX(this.side === 'right'); }; // FIXED
-      this.playSlide  = () => this.player.anims.play('slide', true);
-      this.playJump   = () => this.player.anims.play('jump',  true);
-
-      // --------- AUDIO SETUP ----------
-      const saved = (()=>{ try { return JSON.parse(localStorage.getItem('wj_audio')||'{}'); } catch(e){ return {}; } })();
-      this.musicBaseVolume = (typeof saved.musicBaseVolume === 'number') ? saved.musicBaseVolume : MUSIC_VOLUME;
-      this.musicMuted = !!saved.musicMuted;
-      this.sfxMuted   = !!saved.sfxMuted;
-
-      this.music   = this.sound.add('bgm',     { loop: true, volume: this.musicBaseVolume, rate: MUSIC_RATE_MIN });
-      this.jumpSfx = this.sound.add('jumpSfx', { volume: 0 });
-      this.landSfx = this.sound.add('landSfx', { volume: 0 });
-
-      // Coin audio via HTMLAudio
-      this.coinAudio = null;
-      const initCoinAudio = () => {
-        try {
-          const a = new Audio('coin.wav');
-          a.preload = 'auto';
-          a.crossOrigin = 'anonymous';
-          a.muted = this.sfxMuted;
-          a.volume = this.musicBaseVolume / 3;
-          this.coinAudio = a;
-        } catch(e) { /* ignore */ }
-      };
-      this.input.once('pointerdown', initCoinAudio);
-
-      this.applyAudioSettings = () => {
-        const musicVol = this.musicMuted ? 0 : this.musicBaseVolume;
-        const sfxVol   = this.sfxMuted   ? 0 : (this.musicBaseVolume / 3);
-        if (this.music)   this.music.setVolume(musicVol);
-        if (this.jumpSfx) this.jumpSfx.setVolume(sfxVol);
-        if (this.landSfx) this.landSfx.setVolume(sfxVol);
-        if (this.coinAudio) { this.coinAudio.muted = this.sfxMuted; this.coinAudio.volume = sfxVol; }
-        try {
-          localStorage.setItem('wj_audio', JSON.stringify({
-            musicBaseVolume: this.musicBaseVolume,
-            musicMuted: this.musicMuted,
-            sfxMuted: this.sfxMuted
-          }));
-        } catch(e){}
+      // audio
+      const saved=(()=>{ try{return JSON.parse(localStorage.getItem('wj_audio')||'{}');}catch(e){return{};} })();
+      this.musicBaseVolume= (typeof saved.musicBaseVolume==='number')? saved.musicBaseVolume : MUSIC_VOLUME;
+      this.musicMuted=!!saved.musicMuted; this.sfxMuted=!!saved.sfxMuted;
+      this.music   = this.sound.add('bgm',{loop:true,volume:this.musicBaseVolume,rate:MUSIC_RATE_MIN});
+      this.jumpSfx = this.sound.add('jumpSfx',{volume:0});
+      this.landSfx = this.sound.add('landSfx',{volume:0});
+      this.coinAudio=null;
+      const initCoinAudio=()=>{ try{ const a=new Audio('coin.wav'); a.preload='auto'; a.crossOrigin='anonymous'; a.muted=this.sfxMuted; a.volume=this.musicBaseVolume/3; this.coinAudio=a; }catch(e){} };
+      this.input.once('pointerdown',initCoinAudio);
+      this.applyAudioSettings=()=>{ const musicVol=this.musicMuted?0:this.musicBaseVolume; const sfxVol=this.sfxMuted?0:(this.musicBaseVolume/3);
+        this.music?.setVolume(musicVol); this.jumpSfx?.setVolume(sfxVol); this.landSfx?.setVolume(sfxVol);
+        if(this.coinAudio){ this.coinAudio.muted=this.sfxMuted; this.coinAudio.volume=sfxVol; }
+        try{ localStorage.setItem('wj_audio',JSON.stringify({musicBaseVolume:this.musicBaseVolume,musicMuted:this.musicMuted,sfxMuted:this.sfxMuted})); }catch(e){}
       };
       this.applyAudioSettings();
 
-      // Colliders with rails (landing)
-      const contact = (_player, rail) => {
-        if (!this.alive || !this.playing) return;
-        const which = (rail === this.leftRail) ? 'left' : 'right';
-        if (!this.onWall){
-          this.onWall = true;
-          this.side = which;
-          this.player.setVelocity(0, this.fallSpeed);
-          this.score += 1; this.scoreText.setText(this.score);
-          this.updateFacing();
-          this.player.anims.play('land', true);
-          this.landSfx.play();
-          this.time.delayedCall(80, () => { if (this.onWall && this.alive) this.playSlide(); });
-        } else {
-          this.player.setVelocityX(0);
-        }
+      // rail contact
+      const contact=(_p,rail)=>{
+        if(!this.alive||!this.playing) return;
+        const which=(rail===this.leftRail)?'left':'right';
+        if(!this.onWall){
+          this.onWall=true; this.side=which;
+          this.player.setVelocity(0,this.fallSpeed);
+          this.score+=1; this.scoreText.setText(this.score);
+          this.updateFacing(); this.player.anims.play('land',true); this.landSfx.play();
+          this.time.delayedCall(80,()=>{ if(this.onWall&&this.alive) this.playSlide(); });
+        } else { this.player.setVelocityX(0); }
       };
-      this.colLeft  = this.physics.add.collider(this.player, this.leftRail,  contact, null, this);
-      this.colRight = this.physics.add.collider(this.player, this.rightRail, contact, null, this);
+      this.colLeft = this.physics.add.collider(this.player,this.leftRail, contact,null,this);
+      this.colRight= this.physics.add.collider(this.player,this.rightRail,contact,null,this);
 
-      // Input (jump)
-      this.input.on('pointerdown', () => this.jump());
+      // input
+      this.input.on('pointerdown',()=>this.jump());
 
-      // Spawner config
-      this.spacingBaseMin = 260;
-      this.spacingBaseMax = 340;
-      this.nextSpawnY = this.startY + 260;
-      this.lastSide = 'right';
-      this.lastY = this.startY;
-      this.spawnTimer = this.time.addEvent({ delay: 60, loop: true, paused: true, callback: () => this.spawnAhead() });
+      // spawner
+      this.spacingBaseMin=260; this.spacingBaseMax=340;
+      this.nextSpawnY=this.startY+260; this.lastSide='right'; this.lastY=this.startY;
+      this.spawnTimer=this.time.addEvent({delay:60,loop:true,paused:true,callback:()=>this.spawnAhead()});
 
-      // Overlays & initial placement
+      // overlay + start
       this.showStartOverlay();
-      this.snapToWall('left', this.startY, { stationary:true });
-      this.player.setVelocity(0,0);
+      this.snapToWall('left',this.startY,{stationary:true}); this.player.setVelocity(0,0);
 
-      // Resize handling
-      this.scale.on('resize', (gameSize) => this.onResize(gameSize));
-
-      // Optional audio pause/resume
-      this.game.events.on(Phaser.Core.Events.BLUR, () => { if (this.music && this.music.isPlaying) this.music.pause(); });
-      this.game.events.on(Phaser.Core.Events.FOCUS, () => { if (this.playing && this.music && this.music.isPaused) this.music.resume(); });
+      // resize hooks
+      this.scale.on('resize',(gs)=>this.onResize(gs));
+      this.game.events.on(Phaser.Core.Events.BLUR,()=>{ if(this.music&&this.music.isPlaying) this.music.pause(); });
+      this.game.events.on(Phaser.Core.Events.FOCUS,()=>{ if(this.playing&&this.music&&this.music.isPaused) this.music.resume(); });
     }
 
-    // --- geometry helpers ---
     innerEdgeX(which){
-      const rail = (which === 'left') ? this.leftRail : this.rightRail;
-      return rail.x + ((which === 'left') ? rail.body.halfWidth : -rail.body.halfWidth);
+      const rail=(which==='left')?this.leftRail:this.rightRail;
+      return rail.x + ((which==='left')? rail.body.halfWidth : -rail.body.halfWidth);
     }
-    playerHalfWidth(){ return this.player?.body ? this.player.body.halfWidth : (this.player.displayWidth * 0.5); }
+    playerHalfWidth(){ return this.player?.body ? this.player.body.halfWidth : (this.player.displayWidth*0.5); }
 
-    snapToWall(which, yOverride = null, { stationary = false } = {}){
-      this.onWall = true;
-      this.side = which;
-
-      const edge  = this.innerEdgeX(which);
-      const pHalf = this.playerHalfWidth();
-      let x = (which === 'left') ? (edge + pHalf) : (edge - pHalf);
-      x = Math.round(x);
-
-      if (yOverride !== null) this.player.setY(yOverride);
+    snapToWall(which,yOverride=null,{stationary=false}={}){
+      this.onWall=true; this.side=which;
+      const edge=this.innerEdgeX(which), pHalf=this.playerHalfWidth();
+      let x=(which==='left')? (edge+pHalf) : (edge-pHalf); x=Math.round(x);
+      if(yOverride!==null) this.player.setY(yOverride);
       this.player.setX(x);
-
-      this.player.setVelocity(0, stationary ? 0 : this.fallSpeed);
-
-      this.updateFacing();
-      this.playSlide();
+      this.player.setVelocity(0,stationary?0:this.fallSpeed);
+      this.updateFacing(); this.playSlide();
     }
 
-    // --- UI helpers (Start overlay toggles) ---
-    makeToggleButton(opts){
-      const { x, y, label, getOn, onToggle } = opts;
-      const group = this.add.container(x, y).setScrollFactor(0).setDepth(1001);
-      const bg = this.add.rectangle(0, 0, 180, 40, 0x1c222b, 0.9).setOrigin(0.5).setStrokeStyle(2, 0x344053);
-      const txt = this.add.text(0, 0, '', { fontSize:'16px', color:'#e5eefc' }).setOrigin(0.5);
-      const refresh = () => {
-        const isOn = getOn();
-        txt.setText(`${label}: ${isOn ? 'On' : 'Off'}`);
-        bg.setFillStyle(isOn ? 0x223040 : 0x282a33, 0.95);
-      };
-      refresh();
-
-      const hit = this.add.zone(0,0,180,40).setOrigin(0.5).setInteractive({ useHandCursor:true });
-      hit.on('pointerdown', () => { onToggle(); refresh(); this.applyAudioSettings(); });
-
-      group.add([bg, txt, hit]);
-      return { group, refresh };
+    makeToggleButton({x,y,label,getOn,onToggle}){
+      const group=this.add.container(x,y).setScrollFactor(0).setDepth(1001);
+      const bg=this.add.rectangle(0,0,180,40,0x1c222b,0.9).setOrigin(0.5).setStrokeStyle(2,0x344053);
+      const txt=this.add.text(0,0,'',{fontSize:'16px',color:'#e5eefc'}).setOrigin(0.5);
+      const refresh=()=>{ const on=getOn(); txt.setText(`${label}: ${on?'On':'Off'}`); bg.setFillStyle(on?0x223040:0x282a33,0.95); }; refresh();
+      const hit=this.add.zone(0,0,180,40).setOrigin(0.5).setInteractive({useHandCursor:true});
+      hit.on('pointerdown',()=>{ onToggle(); refresh(); this.applyAudioSettings(); });
+      group.add([bg,txt,hit]); return {group,refresh};
     }
 
     showStartOverlay(){
-      this.hideGameOverOverlay();
-      if (this.overlayStart) this.overlayStart.destroy();
-
-      this.playing = false; this.alive = true; this.deathFall = false;
-      this.fallSpeed = FALL_MIN;
-      this.obstacles.clear(true,true);
-      this.spawnTimer.paused = true;
+      this.hideGameOverOverlay(); if(this.overlayStart) this.overlayStart.destroy();
+      this.playing=false; this.alive=true; this.deathFall=false; this.fallSpeed=FALL_MIN;
+      this.obstacles.clear(true,true); this.spawnTimer.paused=true;
 
       this.cam.stopFollow(); this.cam.setBounds(0,0,this.W,WORLD_H);
-      this.cam.setScroll(0, Math.max(0, this.startY - this.H*0.5));
-      this.cam.startFollow(this.player, true, 1, 1);
+      this.cam.setScroll(0,Math.max(0,this.startY-this.H*0.5)); this.cam.startFollow(this.player,true,1,1);
 
       this.subText.setText('Tap to start').setVisible(true);
 
-      this.overlayStart = this.add.container(0,0).setScrollFactor(0).setDepth(1000);
-      const dim = this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({ useHandCursor:true });
-      const title = this.add.text(this.W/2, this.H*0.30, 'WALL JUMPER', {fontSize:'40px', fontStyle:'800', color: TEST_BG ? '#000' : '#ffffff'}).setOrigin(0.5);
-      const instr = this.add.text(this.W/2, this.H*0.40, 'Tap anywhere to start\nScore on each wall touch\nAvoid the hazards', {fontSize:'18px', color: TEST_BG ? '#333' : '#b7c0cf', align:'center'}).setOrigin(0.5);
+      this.overlayStart=this.add.container(0,0).setScrollFactor(0).setDepth(1000);
+      const dim=this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({useHandCursor:true});
+      const title=this.add.text(this.W/2,this.H*0.30,'WALL JUMPER',{fontSize:'40px',fontStyle:'800',color:TEST_BG?'#000':'#ffffff'}).setOrigin(0.5);
+      const instr=this.add.text(this.W/2,this.H*0.40,'Tap anywhere to start\nScore on each wall touch\nAvoid the hazards',{fontSize:'18px',color:TEST_BG?'#333':'#b7c0cf',align:'center'}).setOrigin(0.5);
+      const musicToggle=this.makeToggleButton({x:this.W/2-95,y:this.H*0.55,label:'Music',getOn:()=>!this.musicMuted,onToggle:()=>{this.musicMuted=!this.musicMuted;}});
+      const sfxToggle  =this.makeToggleButton({x:this.W/2+95,y:this.H*0.55,label:'SFX',getOn:()=>!this.sfxMuted,onToggle:()=>{this.sfxMuted=!this.sfxMuted;}});
+      this.overlayStart.add([dim,title,instr,musicToggle.group,sfxToggle.group]);
 
-      const musicToggle = this.makeToggleButton({
-        x: this.W/2 - 95, y: this.H*0.55,
-        label: 'Music',
-        getOn: () => !this.musicMuted,
-        onToggle: () => { this.musicMuted = !this.musicMuted; }
-      });
-      const sfxToggle = this.makeToggleButton({
-        x: this.W/2 + 95, y: this.H*0.55,
-        label: 'SFX',
-        getOn: () => !this.sfxMuted,
-        onToggle: () => { this.sfxMuted = !this.sfxMuted; }
-      });
-
-      this.overlayStart.add([dim,title,instr, musicToggle.group, sfxToggle.group]);
-
-      // Freeze at start
-      this.snapToWall('left', this.startY, { stationary:true });
-      this.player.setVelocity(0,0);
-
-      // Tap to start
-      this.input.once('pointerdown', () => this.startGame(), this);
+      this.snapToWall('left',this.startY,{stationary:true}); this.player.setVelocity(0,0);
+      this.input.once('pointerdown',()=>this.startGame(),this);
     }
-    hideStartOverlay(){ if (this.overlayStart){ this.overlayStart.destroy(); this.overlayStart = null; } }
-    hideGameOverOverlay(){ if (this.overlayGameOver){ this.overlayGameOver.destroy(); this.overlayGameOver = null; } }
+    hideStartOverlay(){ if(this.overlayStart){ this.overlayStart.destroy(); this.overlayStart=null; } }
+    hideGameOverOverlay(){ if(this.overlayGameOver){ this.overlayGameOver.destroy(); this.overlayGameOver=null; } }
 
     showGameOverOverlay(){
-      this.hideStartOverlay();
-      if (this.overlayGameOver) this.overlayGameOver.destroy();
-
-      this.playing = false; this.spawnTimer.paused = true;
-      if (this.music && this.music.isPlaying) this.music.stop();
-
-      this.overlayGameOver = this.add.container(0,0).setScrollFactor(0).setDepth(1000);
-      const dim = this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({ useHandCursor:true });
-      const title = this.add.text(this.W/2, this.H*0.32, 'GAME OVER', {fontSize:'40px', fontStyle:'800', color: TEST_BG ? '#000' : '#ffffff'}).setOrigin(0.5);
-      const stats = this.add.text(this.W/2, this.H*0.42, `Score ${this.score} • Best ${this.best}`, {fontSize:'18px', color: TEST_BG ? '#333' : '#b7c0cf'}).setOrigin(0.5);
-      const tip = this.add.text(this.W/2, this.H*0.47, 'Tap anywhere to restart', {fontSize:'16px', color: TEST_BG ? '#333' : '#9aa3b2'}).setOrigin(0.5);
+      this.hideStartOverlay(); if(this.overlayGameOver) this.overlayGameOver.destroy();
+      this.playing=false; this.spawnTimer.paused=true; if(this.music&&this.music.isPlaying) this.music.stop();
+      this.overlayGameOver=this.add.container(0,0).setScrollFactor(0).setDepth(1000);
+      const dim=this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({useHandCursor:true});
+      const title=this.add.text(this.W/2,this.H*0.32,'GAME OVER',{fontSize:'40px',fontStyle:'800',color:TEST_BG?'#000':'#ffffff'}).setOrigin(0.5);
+      const stats=this.add.text(this.W/2,this.H*0.42,`Score ${this.score} • Best ${this.best}`,{fontSize:'18px',color:TEST_BG?'#333':'#b7c0cf'}).setOrigin(0.5);
+      const tip=this.add.text(this.W/2,this.H*0.47,'Tap anywhere to restart',{fontSize:'16px',color:TEST_BG?'#333':'#9aa3b2'}).setOrigin(0.5);
       this.overlayGameOver.add([dim,title,stats,tip]);
-
-      this.input.once('pointerdown', () => this.restart(), this);
+      this.input.once('pointerdown',()=>this.restart(),this);
     }
 
-    // --- Flow ---
     startGame(){
-      this.hideStartOverlay();
-      if (this.colLeft)  this.colLeft.active = true;
-      if (this.colRight) this.colRight.active = true;
-
-      if (this.music){
-        if (this.music.isPlaying) this.music.stop();
-        this.music.setRate(MUSIC_RATE_MIN);
-        this.applyAudioSettings();
-        this.music.play();
-      }
-
-      this.score = 0; this.scoreText.setText('0');
-      this.subText.setText('Tap to jump').setVisible(true);
-      this.fallSpeed = FALL_MIN;
-      this.obstacles.clear(true,true);
-      this.player.clearTint();
-
-      this.snapToWall('left', this.startY, { stationary:false });
-
-      this.nextSpawnY = this.startY + 260;
-      this.lastSide = 'right';
-      this.lastY = this.startY;
-
-      // Place coin just ahead at start
-      this.placeCoin(this.player.y + 420);
-
-      this.alive = true;
-      this.deathFall = false;
-      this.playing = true;
-
-      this.cam.rotation = 0;
-      this.cam.setBounds(0,0,this.W,WORLD_H);
-      this.cam.startFollow(this.player, true, 1, 1);
-
-      this.spawnTimer.paused = false;
+      this.hideStartOverlay(); if(this.colLeft) this.colLeft.active=true; if(this.colRight) this.colRight.active=true;
+      if(this.music){ if(this.music.isPlaying) this.music.stop(); this.music.setRate(MUSIC_RATE_MIN); this.applyAudioSettings(); this.music.play(); }
+      this.score=0; this.scoreText.setText('0'); this.subText.setText('Tap to jump').setVisible(true);
+      this.fallSpeed=FALL_MIN; this.obstacles.clear(true,true); this.player.clearTint();
+      this.snapToWall('left',this.startY,{stationary:false});
+      this.nextSpawnY=this.startY+260; this.lastSide='right'; this.lastY=this.startY;
+      this.placeCoin(this.player.y+420);
+      this.alive=true; this.deathFall=false; this.playing=true;
+      this.cam.rotation=0; this.cam.setBounds(0,0,this.W,WORLD_H); this.cam.startFollow(this.player,true,1,1);
+      this.spawnTimer.paused=false;
     }
-
     restart(){ this.hideGameOverOverlay(); this.startGame(); }
 
     jump(){
-      if (!this.playing) return;
-      if (!this.alive){ this.restart(); return; }
-      if (!this.onWall) return;
-
-      const dir = (this.side==='left') ? 1 : -1;
-      this.player.setVelocity(dir*BOOST_V, this.fallSpeed);
-      this.onWall = false;
-      this.subText.setVisible(false);
-
-      this.playJump();
-      this.jumpSfx.play();
-
-      this.time.delayedCall(BOOST_MS, () => {
-        if (!this.onWall && this.alive){ this.player.setVelocity(dir*PUSH_V, this.fallSpeed); }
-      });
+      if(!this.playing) return;
+      if(!this.alive){ this.restart(); return; }
+      if(!this.onWall) return;
+      const dir=(this.side==='left')?1:-1;
+      this.player.setVelocity(dir*BOOST_V,this.fallSpeed); this.onWall=false; this.subText.setVisible(false);
+      this.playJump(); this.jumpSfx.play();
+      this.time.delayedCall(BOOST_MS,()=>{ if(!this.onWall&&this.alive) this.player.setVelocity(dir*PUSH_V,this.fallSpeed); });
     }
 
     getCurrentSpacing(){
-      const t = Phaser.Math.Clamp((this.fallSpeed - FALL_MIN)/(FALL_MAX - FALL_MIN), 0, 1);
-      const min = Phaser.Math.Linear(this.spacingBaseMin, this.spacingBaseMin + 70, t);
-      const max = Phaser.Math.Linear(this.spacingBaseMax, this.spacingBaseMax + 110, t);
-      return { min, max };
+      const t=Phaser.Math.Clamp((this.fallSpeed-FALL_MIN)/(FALL_MAX-FALL_MIN),0,1);
+      const min=Phaser.Math.Linear(this.spacingBaseMin,this.spacingBaseMin+70,t);
+      const max=Phaser.Math.Linear(this.spacingBaseMax,this.spacingBaseMax+110,t);
+      return {min,max};
     }
 
-    // Spawn spikes ahead, keep fair spacing & alignment
     spawnAhead(){
-      if (!this.playing || !this.alive) return;
-      const bufferAhead = 1000;
-      const camY = this.player.y;
-      const { min:curMin, max:curMax } = this.getCurrentSpacing();
-
-      while (this.nextSpawnY < camY + bufferAhead) {
-        let side = (Math.random() < 0.8) ? ((this.lastSide === 'left') ? 'right' : 'left') : this.lastSide;
-        const y = Math.max(this.nextSpawnY, this.lastY + Phaser.Math.Between(curMin|0, curMax|0));
-
-        const texKey = this.textures.exists('obstacle') ? 'obstacle' : 'obstacle_fallback';
-        const ob = this.obstacles.create(0, y, texKey).setDepth(1);
-        ob.setScale(PIXEL_SCALE);
-        ob.body.setSize(OB_DISP_W - 2, OB_DISP_H, true);
-
-        ob.setData('side', side);
-        ob.setFlipX(side === 'left');
-
-        const edge = this.innerEdgeX(side);
-        const half = OB_DISP_W * 0.5;
-        const targetX = (side === 'left') ? Math.round(edge + half - SPIKE_INSET)
-                                          : Math.round(edge - half + SPIKE_INSET);
-        ob.x = targetX;
-
-        ob.body.allowGravity = false;
-        ob.setImmovable(true);
-        ob.setVelocity(0, 0);
-
-        this.lastY = y;
-        this.lastSide = side;
-        this.nextSpawnY = y + Phaser.Math.Between(curMin|0, curMax|0);
-        if (Math.random() < 0.12) this.nextSpawnY += Phaser.Math.Between(40, 80);
+      if(!this.playing||!this.alive) return;
+      const bufferAhead=1000, camY=this.player.y;
+      const {min:curMin,max:curMax}=this.getCurrentSpacing();
+      while(this.nextSpawnY<camY+bufferAhead){
+        let side=(Math.random()<0.8)?((this.lastSide==='left')?'right':'left'):this.lastSide;
+        const y=Math.max(this.nextSpawnY,this.lastY+Phaser.Math.Between(curMin|0,curMax|0));
+        const texKey=this.textures.exists('obstacle')?'obstacle':'obstacle_fallback';
+        const ob=this.obstacles.create(0,y,texKey).setDepth(1);
+        ob.setScale(PIXEL_SCALE); ob.body.setSize(OB_DISP_W-2,OB_DISP_H,true);
+        ob.setData('side',side); ob.setFlipX(side==='left');
+        const edge=this.innerEdgeX(side), half=OB_DISP_W*0.5;
+        const targetX=(side==='left')? Math.round(edge+half-SPIKE_INSET) : Math.round(edge-half+SPIKE_INSET);
+        ob.x=targetX; ob.body.allowGravity=false; ob.setImmovable(true); ob.setVelocity(0,0);
+        this.lastY=y; this.lastSide=side; this.nextSpawnY=y+Phaser.Math.Between(curMin|0,curMax|0);
+        if(Math.random()<0.12) this.nextSpawnY+=Phaser.Math.Between(40,80);
       }
-
-      // Cull above camera
-      const topCull = this.cameras.main.scrollY - 200;
-      this.obstacles.children.each(o => { if (o.active && o.y < topCull) o.destroy(); }, this);
+      const topCull=this.cameras.main.scrollY-200;
+      this.obstacles.children.each(o=>{ if(o.active&&o.y<topCull) o.destroy(); },this);
     }
 
-    // Coin collection
     collectCoin(){
-      if (!this.playing || !this.alive || !this.coin.active) return;
-      this.score += 5;
-      this.scoreText.setText(this.score);
-
-      if (this.coinAudio) {
-        try { this.coinAudio.currentTime = 0; this.coinAudio.play(); } catch(e) {}
-      }
-
-      const pop = this.add.text(this.coin.x, this.coin.y - 10, '+5', {
-        fontSize:'16px', color: TEST_BG ? '#000' : '#ffd54a'
-      }).setDepth(5).setOrigin(0.5);
-      this.tweens.add({
-        targets: pop, y: pop.y - 24, alpha: 0,
-        duration: 420, ease: 'Quad.Out', onComplete: () => pop.destroy()
-      });
-
+      if(!this.playing||!this.alive||!this.coin.active) return;
+      this.score+=5; this.scoreText.setText(this.score);
+      if(this.coinAudio){ try{ this.coinAudio.currentTime=0; this.coinAudio.play(); }catch(e){} }
+      const pop=this.add.text(this.coin.x,this.coin.y-10,'+5',{fontSize:'16px',color:TEST_BG?'#000':'#ffd54a'}).setDepth(5).setOrigin(0.5);
+      this.tweens.add({targets:pop,y:pop.y-24,alpha:0,duration:420,ease:'Quad.Out',onComplete:()=>pop.destroy()});
       this.coin.setActive(false).setVisible(false);
-      this.time.delayedCall(150, () => this.advanceCoin());
+      this.time.delayedCall(150,()=>this.advanceCoin());
     }
 
-    update(_time, dt){
-      if (this.alive){
-        this.fallSpeed = Math.min(FALL_MAX, this.fallSpeed + FALL_ACCEL * (dt/1000));
-        if (this.player.body) this.player.setVelocityY(this.fallSpeed);
-      } else if (this.deathFall){
-        if (this.player.body) this.player.setVelocity(0, 900);
-        const bottomThreshold = this.cam.scrollY + this.H + 120;
-        if (!this.overlayGameOver && this.player.y > bottomThreshold){
-          this.deathFall = false;
-          this.showGameOverOverlay();
-        }
+    update(_time,dt){
+      if(this.alive){
+        this.fallSpeed=Math.min(FALL_MAX,this.fallSpeed+FALL_ACCEL*(dt/1000));
+        if(this.player.body) this.player.setVelocityY(this.fallSpeed);
+      } else if(this.deathFall){
+        if(this.player.body) this.player.setVelocity(0,900);
+        const bottom=this.cam.scrollY+this.H+120;
+        if(!this.overlayGameOver&&this.player.y>bottom){ this.deathFall=false; this.showGameOverOverlay(); }
       }
-      if (this.playing && this.alive && this.player.y > WORLD_H - 200){ this.gameOver(); }
+      if(this.playing&&this.alive&&this.player.y>WORLD_H-200) this.gameOver();
 
-      // Keep spikes locked to walls each frame (and crisp)
-      this.obstacles.children.iterate(ob => {
-        if (!ob || !ob.active) return;
-        const side = ob.getData('side');
-        const edge = this.innerEdgeX(side);
-        const half = OB_DISP_W * 0.5;
-        const targetX = (side === 'left') ? Math.round(edge + half - SPIKE_INSET)
-                                          : Math.round(edge - half + SPIKE_INSET);
-        if (ob.x !== targetX) { ob.x = targetX; ob.body.updateFromGameObject(); }
-        ob.setFlipX(side === 'left');
-        ob.setVelocityX(0);
+      this.obstacles.children.iterate(ob=>{
+        if(!ob||!ob.active) return;
+        const side=ob.getData('side'), edge=this.innerEdgeX(side), half=OB_DISP_W*0.5;
+        const targetX=(side==='left')? Math.round(edge+half-SPIKE_INSET) : Math.round(edge-half+SPIKE_INSET);
+        if(ob.x!==targetX){ ob.x=targetX; ob.body.updateFromGameObject(); }
+        ob.setFlipX(side==='left'); ob.setVelocityX(0);
       });
 
-      // Keep coin centered between walls
-      if (this.coin && this.coin.active) {
-        const targetX = Math.round((this.WALL_X.left + this.WALL_X.right) / 2);
-        if (this.coin.x !== targetX) { this.coin.x = targetX; this.coin.body.updateFromGameObject(); }
+      if(this.coin&&this.coin.active){
+        const tx=Math.round((this.WALL_X.left+this.WALL_X.right)/2);
+        if(this.coin.x!==tx){ this.coin.x=tx; this.coin.body.updateFromGameObject(); }
       }
+      if(this.coin&&(this.coin.y<this.cameras.main.scrollY-200)) this.advanceCoin();
 
-      // If coin scrolled above camera, push it ahead
-      if (this.coin && (this.coin.y < this.cameras.main.scrollY - 200)) {
-        this.advanceCoin();
-      }
-
-      // Smoothly ramp music tempo with fall speed
-      if (this.music && this.music.isPlaying) {
-        const t = Phaser.Math.Clamp((this.fallSpeed - FALL_MIN)/(FALL_MAX - FALL_MIN), 0, 1);
-        const eased = Phaser.Math.Easing.Quadratic.Out(t);
-        const desired = Phaser.Math.Linear(MUSIC_RATE_MIN, MUSIC_RATE_MAX, eased);
-        const current = this.music.rate;
-        const next = current + (desired - current) * MUSIC_SMOOTH;
-        if (Math.abs(next - current) > 0.001) this.music.setRate(next);
+      if(this.music&&this.music.isPlaying){
+        const t=Phaser.Math.Clamp((this.fallSpeed-FALL_MIN)/(FALL_MAX-FALL_MIN),0,1);
+        const desired=Phaser.Math.Linear(MUSIC_RATE_MIN,MUSIC_RATE_MAX,Phaser.Math.Easing.Quadratic.Out(t));
+        const next=this.music.rate + (desired - this.music.rate)*MUSIC_SMOOTH;
+        if(Math.abs(next - this.music.rate)>0.001) this.music.setRate(next);
       }
     }
 
     gameOver(){
-      if (!this.alive) return;
-      this.alive = false; this.playing = false;
-      this.best = Math.max(this.best, this.score);
-      this.player.setTint(0xff4d4d);
-      this.spawnTimer.paused = true;
-      if (this.colLeft)  this.colLeft.active = false;
-      if (this.colRight) this.colRight.active = false;
-      this.cam.stopFollow();
-      this.onWall = false;
-      this.deathFall = true;
-      this.player.setVelocity(0, 900);
-
-      if (this.music && this.music.isPlaying) this.music.stop();
-
+      if(!this.alive) return;
+      this.alive=false; this.playing=false; this.best=Math.max(this.best,this.score);
+      this.player.setTint(0xff4d4d); this.spawnTimer.paused=true;
+      if(this.colLeft) this.colLeft.active=false; if(this.colRight) this.colRight.active=false;
+      this.cam.stopFollow(); this.onWall=false; this.deathFall=true; this.player.setVelocity(0,900);
+      if(this.music&&this.music.isPlaying) this.music.stop();
       this.showGameOverOverlay();
     }
 
-    onResize(gameSize){
-      this.physics.world.setBounds(0, 0, gameSize.width, WORLD_H);
-      this.cam.setBounds(0, 0, gameSize.width, WORLD_H);
+    onResize(gs){
+      this.physics.world.setBounds(0,0,gs.width,WORLD_H);
+      this.cam.setBounds(0,0,gs.width,WORLD_H);
 
-      // Rails and walls resize
-      this.leftRail.setPosition(this.WALL_X.left,  WORLD_H/2).setDisplaySize(WALL_DISP_W, WORLD_H).refreshBody();
-      this.rightRail.setPosition(this.WALL_X.right, WORLD_H/2).setDisplaySize(WALL_DISP_W, WORLD_H).refreshBody();
+      this.leftRail.setPosition(this.WALL_X.left,WORLD_H/2).setDisplaySize(WALL_DISP_W,WORLD_H).refreshBody();
+      this.rightRail.setPosition(this.WALL_X.right,WORLD_H/2).setDisplaySize(WALL_DISP_W,WORLD_H).refreshBody();
 
-      this.leftWallVis.setPosition(this.WALL_X.left, WORLD_H/2).setSize(WALL_DISP_W, WORLD_H).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
-      this.rightWallVis.setPosition(this.WALL_X.right, WORLD_H/2).setSize(WALL_DISP_W, WORLD_H).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
+      this.leftWallVis.setPosition(this.WALL_X.left,WORLD_H/2).setSize(WALL_DISP_W,WORLD_H).setTileScale(PIXEL_SCALE,PIXEL_SCALE);
+      this.rightWallVis.setPosition(this.WALL_X.right,WORLD_H/2).setSize(WALL_DISP_W,WORLD_H).setTileScale(PIXEL_SCALE,PIXEL_SCALE);
 
-      // Reposition gradient strips to hug inner edges, keep consistent DPI
-      const leftInner  = this.innerEdgeX('left');
-      const rightInner = this.innerEdgeX('right');
-      this.leftGrad.setPosition(Math.round(leftInner + GRAD_DISP_W/2), WORLD_H/2).setSize(GRAD_DISP_W, WORLD_H).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
-      this.rightGrad.setPosition(Math.round(rightInner - GRAD_DISP_W/2), WORLD_H/2).setSize(GRAD_DISP_W, WORLD_H).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
+      const leftInner=this.innerEdgeX('left'), rightInner=this.innerEdgeX('right');
+      this.leftGrad.setPosition(Math.round(leftInner+GRAD_DISP_W/2),WORLD_H/2).setSize(GRAD_DISP_W,WORLD_H).setTileScale(PIXEL_SCALE,PIXEL_SCALE).setFlipX(true);
+      this.rightGrad.setPosition(Math.round(rightInner-GRAD_DISP_W/2),WORLD_H/2).setSize(GRAD_DISP_W,WORLD_H).setTileScale(PIXEL_SCALE,PIXEL_SCALE).setFlipX(true);
 
-      // Keep player snapped if on wall
-      if (this.onWall) this.snapToWall(this.side, null, { stationary: !this.playing });
-
-      // HUD
-      this.scoreText.setPosition(this.W/2, 50);
-      this.subText.setPosition(this.W/2, this.H - 34);
-
-      // Keep coin centered
-      if (this.coin) this.coin.x = Math.round((this.WALL_X.left + this.WALL_X.right)/2);
+      if(this.onWall) this.snapToWall(this.side,null,{stationary:!this.playing});
+      this.scoreText.setPosition(this.W/2,50); this.subText.setPosition(this.W/2,this.H-34);
+      if(this.coin) this.coin.x=Math.round((this.WALL_X.left+this.WALL_X.right)/2);
     }
   }
 
-  // -------------- Phaser Game Config (pixel-perfect) --------------
-  const game = new Phaser.Game({
+  const game=new Phaser.Game({
     type: Phaser.AUTO,
     parent: 'game-root',
-    backgroundColor: TEST_BG ? '#ffff00' : '#101317',
-    physics: { default: 'arcade', arcade:{ gravity:{y:0}, debug:false } },
+    backgroundColor: TEST_BG?'#ffff00':'#101317',
+    physics: { default:'arcade', arcade:{gravity:{y:0}, debug:false} },
     scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH },
-    render: {
-      pixelArt: true,   // crisp sampling
-      antialias: false, // no smoothing
-      roundPixels: true,
-      resolution: 1     // consistent 1:1 grid on all DPI
-    },
+    render: { pixelArt:true, antialias:false, roundPixels:true, resolution:1 },
     scene: [Main]
   });
 
-  // Kick resize events when container size changes
-  const stageEl = document.querySelector('.stage');
-  new ResizeObserver(() => { window.dispatchEvent(new Event('resize')); }).observe(stageEl);
+  const stageEl=document.querySelector('.stage');
+  new ResizeObserver(()=>{ window.dispatchEvent(new Event('resize')); }).observe(stageEl);
 })();
 </script>
 </body>
