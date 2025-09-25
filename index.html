@@ -3,22 +3,17 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"/>
-  <title>Wall Jumper — Width ≤ 600, Height = Available</title>
+  <title>Wall Jumper — Pixel Perfect</title>
   <style>
     :root { color-scheme: dark; }
     html, body {
       margin: 0; padding: 0; height: 100%;
-      background: #ffff00; /* TEST: yellow */
-      color: #000;
+      background: #101317; color: #fff;
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
       overflow: hidden;
     }
     .shell {
       position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-      padding-left: env(safe-area-inset-left);
-      padding-right: env(safe-area-inset-right);
-      padding-top: env(safe-area-inset-top);
-      padding-bottom: env(safe-area-inset-bottom);
     }
     .stage {
       width: min(100vw, 600px); height: 100%;
@@ -26,46 +21,11 @@
     }
     #game-root canvas {
       display:block; width:100%; height:100%;
-      image-rendering: pixelated; image-rendering: crisp-edges;
+      image-rendering: pixelated;          /* keep both for cross-browser */
+      image-rendering: crisp-edges;
       touch-action: manipulation;
     }
   </style>
-
-  <script>
-    (function(){
-      const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-      function getViewportHeightPx(){
-        const vv = window.visualViewport;
-        const cands = [ vv && vv.height, window.innerHeight, document.documentElement && document.documentElement.clientHeight ].filter(Boolean);
-        return Math.max(1, Math.round(Math.max.apply(null, cands)));
-      }
-      function sizeStage(){
-        const shell = document.querySelector('.shell');
-        const stage = document.querySelector('.stage');
-        if (!shell || !stage) return;
-        if (isMobile) {
-          const h = getViewportHeightPx();
-          for (const el of [shell, stage]) { el.style.height = h+'px'; el.style.minHeight = h+'px'; el.style.maxHeight = h+'px'; }
-        } else {
-          shell.style.height = '100vh'; shell.style.minHeight = '100vh'; shell.style.maxHeight = '100vh';
-          stage.style.height = '100%'; stage.style.minHeight = '100%'; stage.style.maxHeight = '100%';
-        }
-        window.dispatchEvent(new Event('resize'));
-      }
-      function init(){
-        sizeStage();
-        window.addEventListener('resize', sizeStage);
-        window.addEventListener('orientationchange', () => setTimeout(sizeStage, 100));
-        if (window.visualViewport){
-          window.visualViewport.addEventListener('resize', sizeStage);
-          window.visualViewport.addEventListener('scroll', sizeStage);
-        }
-        setTimeout(sizeStage, 50); setTimeout(sizeStage, 300); setTimeout(sizeStage, 900);
-      }
-      window.addEventListener('DOMContentLoaded', init);
-    })();
-  </script>
-
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
 </head>
 <body>
@@ -77,33 +37,35 @@
 
 <script>
 (() => {
-  // ------- Tunables -------
+  // ------------------------
+  // Global Tunables / Flags
+  // ------------------------
+  const TEST_BG       = false;            // set true for yellow test background
   const WORLD_H       = 100000;
   const FALL_MIN      = 300, FALL_MAX = 520, FALL_ACCEL = 6.0;
-
-  // Snappier cross jump
   const PUSH_V        = 980;
   const BOOST_V       = 1450;
   const BOOST_MS      = 60;
 
-  // Pixel scale used across sprites
+  // Unified pixel scaling (apply to ALL art)
   const PIXEL_SCALE   = 2;
 
-  // Wall art (source)
-  const WALL_SRC_W    = 26;
+  // Assets source sizes
+  const WALL_SRC_W    = 26;               // wall.png is 26px wide tile
+  const OB_SRC_W = 24, OB_SRC_H = 12;     // spike sprite
+  const SPIKE_INSET_SRC = 2;              // sink spikes slightly into walls
+  const NINJA_FRAME_W = 24, NINJA_FRAME_H = 34;
+  const COIN_FRAME    = 16;
+  const GRAD_SRC_W    = 54, GRAD_SRC_H = 104; // gradiant.png
+
+  // Derived (display) sizes
   const WALL_DISP_W   = WALL_SRC_W * PIXEL_SCALE;
+  const OB_DISP_W     = OB_SRC_W   * PIXEL_SCALE;
+  const OB_DISP_H     = OB_SRC_H   * PIXEL_SCALE;
+  const SPIKE_INSET   = SPIKE_INSET_SRC * PIXEL_SCALE;
+  const GRAD_DISP_W   = GRAD_SRC_W * PIXEL_SCALE;
 
-  // Gradient strip (exact pixels; do NOT scale to keep requested 54×104 look)
-  const GRAD_SRC_W    = 54;  // image width
-  const GRAD_SRC_H    = 104; // image tile height (for repeat)
-  const GRAD_DISP_W   = GRAD_SRC_W; // keep 1:1 to the asset
-
-  // Spikes (24x12 source → display scaled by PIXEL_SCALE)
-  const OB_SRC_W = 24, OB_SRC_H = 12;
-  const OB_DISP_W = OB_SRC_W * PIXEL_SCALE, OB_DISP_H = OB_SRC_H * PIXEL_SCALE;
-  const SPIKE_INSET_SRC = 2, SPIKE_INSET = SPIKE_INSET_SRC * PIXEL_SCALE; // sink into wall to kill gaps
-
-  // AUDIO mapping & smoothing (tempo follows speed gently)
+  // Audio feel
   const MUSIC_RATE_MIN = 1.00;
   const MUSIC_RATE_MAX = 1.12;
   const MUSIC_VOLUME   = 0.60;
@@ -120,32 +82,36 @@
       return { left, right };
     }
 
-    // Helper: inner edge X of a wall
-    innerEdgeX(which){
-      const rail = (which === 'left') ? this.leftRail : this.rightRail;
-      return rail.x + ((which === 'left') ? rail.body.halfWidth : -rail.body.halfWidth);
-    }
-
     preload(){
-      this.load.spritesheet('ninja', 'ninja_sheet.png', { frameWidth: 24, frameHeight: 34 });
-      this.load.image('wallTile', 'wall.png');
-      this.load.image('obstacle', 'spike.png');
+      // Core art
+      this.load.spritesheet('ninja', 'ninja_sheet.png', { frameWidth: NINJA_FRAME_W, frameHeight: NINJA_FRAME_H });
+      this.load.image('wallTile', 'wall.png');     // 26px wide column tile
+      this.load.image('obstacle', 'spike.png');    // 24×12
+      this.load.spritesheet('coin', 'coin.png', { frameWidth: COIN_FRAME, frameHeight: COIN_FRAME });
 
-      // Gradient strips
-      this.load.image('wallGrad', 'gradiant.png'); // 54×104, repeats vertically
+      // Gradient strips between walls
+      this.load.image('wallGrad', 'gradiant.png'); // 54×104
 
-      // Coin (16x16, 4 frames)
-      this.load.spritesheet('coin', 'coin.png', { frameWidth: 16, frameHeight: 16 });
-
-      // Music + SFX
+      // Audio
       this.load.audio('bgm', ['NINJA.mp3']);
       this.load.audio('jumpSfx', 'jump.wav');
       this.load.audio('landSfx', 'land.wav');
 
-      // fallback obstacle if asset missing
-      const g = this.make.graphics({add:false});
-      g.fillStyle(0xff4d4d,1); g.fillRect(0,0,OB_SRC_W,OB_SRC_H);
-      g.generateTexture('obstacle_fallback',OB_SRC_W,OB_SRC_H); g.destroy();
+      // ---- FALLBACKS ----
+      // Obstacle fallback (red slab)
+      const g1 = this.make.graphics({ add:false });
+      g1.fillStyle(0xff4d4d,1).fillRect(0,0,OB_SRC_W,OB_SRC_H);
+      g1.generateTexture('obstacle_fallback',OB_SRC_W,OB_SRC_H);
+      g1.destroy();
+
+      // Wall fallback (26×256)
+      const W = WALL_SRC_W, H = 256;
+      const g2 = this.make.graphics({ add:false });
+      g2.fillStyle(0x2a2f3a,1).fillRect(0,0,W,H);         // base
+      g2.lineStyle(1,0x3a4250,1);
+      for (let y=0; y<H; y+=8) g2.strokeLineShape(new Phaser.Geom.Line(0,y,W,y));
+      g2.generateTexture('wall_fallback', W, H);
+      g2.destroy();
     }
 
     create(){
@@ -153,49 +119,48 @@
       this.anims.create({ key:'slide', frames: this.anims.generateFrameNumbers('ninja', { start:0,  end:11 }), frameRate:18, repeat:-1 });
       this.anims.create({ key:'jump',  frames: this.anims.generateFrameNumbers('ninja', { start:12, end:15 }), frameRate:18, repeat:0  });
       this.anims.create({ key:'land',  frames: [{ key:'ninja', frame:16 }], frameRate:1, repeat:0 });
+      this.anims.create({ key:'coinSpin', frames: this.anims.generateFrameNumbers('coin', { start: 0, end: 3 }), frameRate: 8, repeat: -1 });
 
-      this.anims.create({
-        key: 'coinSpin',
-        frames: this.anims.generateFrameNumbers('coin', { start: 0, end: 3 }),
-        frameRate: 8,
-        repeat: -1
-      });
-
-      // Physics world
+      // Physics world & camera
       this.physics.world.setBounds(0, 0, this.W, WORLD_H);
+      this.cam = this.cameras.main;
+      this.cam.setBounds(0,0,this.W,WORLD_H);
+      this.cam.setBackgroundColor(TEST_BG ? '#ffff00' : '#101317');
+      this.cam.setRoundPixels(true);
 
-      // Visual walls
-      this.leftWallVis  = this.add.tileSprite(this.WALL_X.left,  WORLD_H/2, WALL_DISP_W, WORLD_H, 'wallTile')
-        .setOrigin(0.5, 0.5).setDepth(0).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
-      this.rightWallVis = this.add.tileSprite(this.WALL_X.right, WORLD_H/2, WALL_DISP_W, WORLD_H, 'wallTile')
-        .setOrigin(0.5, 0.5).setDepth(0).setFlipX(true).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
+      // --- WALLS ---
+      const wallKey = this.textures.exists('wallTile') ? 'wallTile' : 'wall_fallback';
+      this.leftWallVis  = this.add.tileSprite(this.WALL_X.left,  WORLD_H/2, WALL_DISP_W, WORLD_H, wallKey)
+        .setOrigin(0.5).setDepth(0).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
+      this.rightWallVis = this.add.tileSprite(this.WALL_X.right, WORLD_H/2, WALL_DISP_W, WORLD_H, wallKey)
+        .setOrigin(0.5).setDepth(0).setFlipX(true).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
 
-      // Physics rails
+      // --- RAILS (physics) ---
       this.add.graphics().generateTexture('rail1x1', 1, 1);
       this.leftRail  = this.physics.add.staticImage(this.WALL_X.left,  WORLD_H/2, 'rail1x1').setAlpha(0);
       this.rightRail = this.physics.add.staticImage(this.WALL_X.right, WORLD_H/2, 'rail1x1').setAlpha(0);
       this.leftRail.setDisplaySize(WALL_DISP_W, WORLD_H).refreshBody();
       this.rightRail.setDisplaySize(WALL_DISP_W, WORLD_H).refreshBody();
 
-      // --- NEW: Gradient strips (inside edges, behind ninja/spikes) ---
-      // Position: immediately inside each wall, width = 54px, covers full world height
+      // --- GRADIENT STRIPS (behind ninja/spikes, inside walls) ---
       const leftInner  = this.innerEdgeX('left');
       const rightInner = this.innerEdgeX('right');
 
       this.leftGrad = this.add.tileSprite(
         Math.round(leftInner + GRAD_DISP_W/2), WORLD_H/2, GRAD_DISP_W, WORLD_H, 'wallGrad'
-      ).setOrigin(0.5, 0.5).setDepth(0).setTileScale(1, 1); // depth 0 keeps it behind spikes(1) & ninja(2)
+      ).setOrigin(0.5).setDepth(0).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
 
       this.rightGrad = this.add.tileSprite(
         Math.round(rightInner - GRAD_DISP_W/2), WORLD_H/2, GRAD_DISP_W, WORLD_H, 'wallGrad'
-      ).setOrigin(0.5, 0.5).setDepth(0).setFlipX(true).setTileScale(1, 1);
+      ).setOrigin(0.5).setDepth(0).setFlipX(true).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
 
-      // Player
+      // --- PLAYER ---
       this.startY = Math.min(700, Math.max(420, this.H * 0.75));
-      this.player = this.physics.add.sprite(this.W/2, this.startY, 'ninja', 0).setDepth(2);
-      this.player.setScale(PIXEL_SCALE);
+      this.player = this.physics.add.sprite(this.W/2, this.startY, 'ninja', 0)
+        .setDepth(2)
+        .setScale(PIXEL_SCALE);
       this.player.body.setSize(20, 30, true);
-      this.player.body.setOffset((24-20)/2, (34-30)/2);
+      this.player.body.setOffset((NINJA_FRAME_W-20)/2, (NINJA_FRAME_H-30)/2);
 
       // State
       this.physics.world.gravity.y = 0;
@@ -207,24 +172,22 @@
       this.deathFall = false;
       this.score = 0; this.best = 0;
 
-      // Camera
-      this.cam = this.cameras.main;
-      this.cam.setBounds(0,0,this.W,WORLD_H);
+      // Camera follow
       this.cam.startFollow(this.player, true, 1, 1);
-      this.cam.setBackgroundColor('#ffff00'); // TEST: yellow
-      this.cam.setRoundPixels(true);
 
       // HUD
-      this.scoreText = this.add.text(this.W/2, 50, '0', {fontSize:'48px', fontStyle:'800', color:'#000'})
-        .setOrigin(0.5).setScrollFactor(0).setDepth(10);
-      this.subText   = this.add.text(this.W/2, this.H-34, 'Tap to start', {fontSize:'16px', color:'#333'})
-        .setOrigin(0.5).setScrollFactor(0).setDepth(10);
+      this.scoreText = this.add.text(this.W/2, 50, '0', {
+        fontSize:'48px', fontStyle:'800', color: TEST_BG ? '#000' : '#fff'
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(10);
+      this.subText   = this.add.text(this.W/2, this.H-34, 'Tap to start', {
+        fontSize:'16px', color: TEST_BG ? '#333' : '#9aa3b2'
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(10);
 
-      // Obstacles
+      // Obstacles group
       this.obstacles = this.physics.add.group({ allowGravity:false, immovable:true });
       this.physics.add.overlap(this.player, this.obstacles, () => { if(this.playing) this.gameOver(); }, null, this);
 
-      // ---- COIN SETUP ----
+      // Coin
       const midX = () => (this.WALL_X.left + this.WALL_X.right) / 2;
       this.coin = this.physics.add.sprite(midX(), this.startY + 360, 'coin', 0)
         .setScale(PIXEL_SCALE)
@@ -244,7 +207,7 @@
       };
 
       // Helpers
-      this.updateFacing = () => this.player.setFlipX(this.side === 'right');
+      this.updateFacing = () => this.player.setFlipX(this.side === 'right'));
       this.playSlide  = () => this.player.anims.play('slide', true);
       this.playJump   = () => this.player.anims.play('jump',  true);
 
@@ -258,7 +221,7 @@
       this.jumpSfx = this.sound.add('jumpSfx', { volume: 0 });
       this.landSfx = this.sound.add('landSfx', { volume: 0 });
 
-      // NEW (coin audio): HTMLAudio fallback, created after first user gesture
+      // Coin audio via HTMLAudio (best reliability on iOS for short sfx)
       this.coinAudio = null;
       const initCoinAudio = () => {
         try {
@@ -266,7 +229,7 @@
           a.preload = 'auto';
           a.crossOrigin = 'anonymous';
           a.muted = this.sfxMuted;
-          a.volume = this.musicBaseVolume / 3; // keep SFX under music, like others
+          a.volume = this.musicBaseVolume / 3;
           this.coinAudio = a;
         } catch(e) { /* ignore */ }
       };
@@ -278,10 +241,7 @@
         if (this.music)   this.music.setVolume(musicVol);
         if (this.jumpSfx) this.jumpSfx.setVolume(sfxVol);
         if (this.landSfx) this.landSfx.setVolume(sfxVol);
-        if (this.coinAudio) {
-          this.coinAudio.muted = this.sfxMuted;
-          this.coinAudio.volume = sfxVol;
-        }
+        if (this.coinAudio) { this.coinAudio.muted = this.sfxMuted; this.coinAudio.volume = sfxVol; }
         try {
           localStorage.setItem('wj_audio', JSON.stringify({
             musicBaseVolume: this.musicBaseVolume,
@@ -292,7 +252,7 @@
       };
       this.applyAudioSettings();
 
-      // Rail contact handler (land)
+      // Colliders with rails (landing)
       const contact = (_player, rail) => {
         if (!this.alive || !this.playing) return;
         const which = (rail === this.leftRail) ? 'left' : 'right';
@@ -312,10 +272,10 @@
       this.colLeft  = this.physics.add.collider(this.player, this.leftRail,  contact, null, this);
       this.colRight = this.physics.add.collider(this.player, this.rightRail, contact, null, this);
 
-      // Generic input (jump on tap)
+      // Input (jump)
       this.input.on('pointerdown', () => this.jump());
 
-      // Spawner
+      // Spawner config
       this.spacingBaseMin = 260;
       this.spacingBaseMax = 340;
       this.nextSpawnY = this.startY + 260;
@@ -323,26 +283,32 @@
       this.lastY = this.startY;
       this.spawnTimer = this.time.addEvent({ delay: 60, loop: true, paused: true, callback: () => this.spawnAhead() });
 
-      // Start overlay & initial placement
+      // Overlays & initial placement
       this.showStartOverlay();
       this.snapToWall('left', this.startY, { stationary:true });
       this.player.setVelocity(0,0);
 
-      // Resize
+      // Resize handling
       this.scale.on('resize', (gameSize) => this.onResize(gameSize));
 
-      // Optional: pause/resume audio on blur/focus
+      // Optional audio pause/resume
       this.game.events.on(Phaser.Core.Events.BLUR, () => { if (this.music && this.music.isPlaying) this.music.pause(); });
       this.game.events.on(Phaser.Core.Events.FOCUS, () => { if (this.playing && this.music && this.music.isPaused) this.music.resume(); });
     }
 
-    // Add stationary control to prevent pre-start drift
+    // --- geometry helpers ---
+    innerEdgeX(which){
+      const rail = (which === 'left') ? this.leftRail : this.rightRail;
+      return rail.x + ((which === 'left') ? rail.body.halfWidth : -rail.body.halfWidth);
+    }
+    playerHalfWidth(){ return this.player?.body ? this.player.body.halfWidth : (this.player.displayWidth * 0.5); }
+
     snapToWall(which, yOverride = null, { stationary = false } = {}){
       this.onWall = true;
       this.side = which;
 
       const edge  = this.innerEdgeX(which);
-      const pHalf = this.player?.body ? this.player.body.halfWidth : (this.player.displayWidth * 0.5);
+      const pHalf = this.playerHalfWidth();
       let x = (which === 'left') ? (edge + pHalf) : (edge - pHalf);
       x = Math.round(x);
 
@@ -355,7 +321,7 @@
       this.playSlide();
     }
 
-    // ------- UI helpers (Start overlay toggles) -------
+    // --- UI helpers (Start overlay toggles) ---
     makeToggleButton(opts){
       const { x, y, label, getOn, onToggle } = opts;
       const group = this.add.container(x, y).setScrollFactor(0).setDepth(1001);
@@ -375,7 +341,6 @@
       return { group, refresh };
     }
 
-    // Overlays
     showStartOverlay(){
       this.hideGameOverOverlay();
       if (this.overlayStart) this.overlayStart.destroy();
@@ -393,8 +358,8 @@
 
       this.overlayStart = this.add.container(0,0).setScrollFactor(0).setDepth(1000);
       const dim = this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({ useHandCursor:true });
-      const title = this.add.text(this.W/2, this.H*0.30, 'WALL JUMPER', {fontSize:'40px', fontStyle:'800', color:'#000000'}).setOrigin(0.5);
-      const instr = this.add.text(this.W/2, this.H*0.40, 'Tap anywhere to start\nScore on each wall touch\nAvoid the hazards', {fontSize:'18px', color:'#333333', align:'center'}).setOrigin(0.5);
+      const title = this.add.text(this.W/2, this.H*0.30, 'WALL JUMPER', {fontSize:'40px', fontStyle:'800', color: TEST_BG ? '#000' : '#ffffff'}).setOrigin(0.5);
+      const instr = this.add.text(this.W/2, this.H*0.40, 'Tap anywhere to start\nScore on each wall touch\nAvoid the hazards', {fontSize:'18px', color: TEST_BG ? '#333' : '#b7c0cf', align:'center'}).setOrigin(0.5);
 
       const musicToggle = this.makeToggleButton({
         x: this.W/2 - 95, y: this.H*0.55,
@@ -426,20 +391,19 @@
       if (this.overlayGameOver) this.overlayGameOver.destroy();
 
       this.playing = false; this.spawnTimer.paused = true;
-
       if (this.music && this.music.isPlaying) this.music.stop();
 
       this.overlayGameOver = this.add.container(0,0).setScrollFactor(0).setDepth(1000);
       const dim = this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({ useHandCursor:true });
-      const title = this.add.text(this.W/2, this.H*0.32, 'GAME OVER', {fontSize:'40px', fontStyle:'800', color:'#000000'}).setOrigin(0.5);
-      const stats = this.add.text(this.W/2, this.H*0.42, `Score ${this.score} • Best ${this.best}`, {fontSize:'18px', color:'#333333'}).setOrigin(0.5);
-      const tip = this.add.text(this.W/2, this.H*0.47, 'Tap anywhere to restart', {fontSize:'16px', color:'#333333'}).setOrigin(0.5);
+      const title = this.add.text(this.W/2, this.H*0.32, 'GAME OVER', {fontSize:'40px', fontStyle:'800', color: TEST_BG ? '#000' : '#ffffff'}).setOrigin(0.5);
+      const stats = this.add.text(this.W/2, this.H*0.42, `Score ${this.score} • Best ${this.best}`, {fontSize:'18px', color: TEST_BG ? '#333' : '#b7c0cf'}).setOrigin(0.5);
+      const tip = this.add.text(this.W/2, this.H*0.47, 'Tap anywhere to restart', {fontSize:'16px', color: TEST_BG ? '#333' : '#9aa3b2'}).setOrigin(0.5);
       this.overlayGameOver.add([dim,title,stats,tip]);
 
       this.input.once('pointerdown', () => this.restart(), this);
     }
 
-    // Flow
+    // --- Flow ---
     startGame(){
       this.hideStartOverlay();
       if (this.colLeft)  this.colLeft.active = true;
@@ -480,7 +444,6 @@
 
     restart(){ this.hideGameOverOverlay(); this.startGame(); }
 
-    // Jump
     jump(){
       if (!this.playing) return;
       if (!this.alive){ this.restart(); return; }
@@ -506,7 +469,7 @@
       return { min, max };
     }
 
-    // Spawn spikes
+    // Spawn spikes ahead, keep fair spacing & alignment
     spawnAhead(){
       if (!this.playing || !this.alive) return;
       const bufferAhead = 1000;
@@ -546,33 +509,24 @@
       this.obstacles.children.each(o => { if (o.active && o.y < topCull) o.destroy(); }, this);
     }
 
-    // ---- COIN PICKUP ----
+    // Coin collection
     collectCoin(){
       if (!this.playing || !this.alive || !this.coin.active) return;
-
-      // Score +5
       this.score += 5;
       this.scoreText.setText(this.score);
 
-      // NEW (coin audio): play if initialized (after first tap)
       if (this.coinAudio) {
-        try {
-          this.coinAudio.currentTime = 0;
-          this.coinAudio.play();
-        } catch(e) { /* ignore */ }
+        try { this.coinAudio.currentTime = 0; this.coinAudio.play(); } catch(e) {}
       }
 
-      // Little pop & +5 text
-      const pop = this.add.text(this.coin.x, this.coin.y - 10, '+5', { fontSize:'16px', color:'#000' }).setDepth(5);
-      pop.setScale(1).setOrigin(0.5);
+      const pop = this.add.text(this.coin.x, this.coin.y - 10, '+5', {
+        fontSize:'16px', color: TEST_BG ? '#000' : '#ffd54a'
+      }).setDepth(5).setOrigin(0.5);
       this.tweens.add({
-        targets: pop,
-        y: pop.y - 24, alpha: 0,
-        duration: 420, ease: 'Quad.Out',
-        onComplete: () => pop.destroy()
+        targets: pop, y: pop.y - 24, alpha: 0,
+        duration: 420, ease: 'Quad.Out', onComplete: () => pop.destroy()
       });
 
-      // Hide coin and respawn ahead
       this.coin.setActive(false).setVisible(false);
       this.time.delayedCall(150, () => this.advanceCoin());
     }
@@ -591,7 +545,7 @@
       }
       if (this.playing && this.alive && this.player.y > WORLD_H - 200){ this.gameOver(); }
 
-      // Keep spikes locked to wall each frame
+      // Keep spikes locked to walls each frame (and crisp)
       this.obstacles.children.iterate(ob => {
         if (!ob || !ob.active) return;
         const side = ob.getData('side');
@@ -604,18 +558,18 @@
         ob.setVelocityX(0);
       });
 
-      // Ensure coin stays centered between the walls even after resize
+      // Keep coin centered between walls
       if (this.coin && this.coin.active) {
         const targetX = Math.round((this.WALL_X.left + this.WALL_X.right) / 2);
         if (this.coin.x !== targetX) { this.coin.x = targetX; this.coin.body.updateFromGameObject(); }
       }
 
-      // If coin somehow scrolled past and wasn't collected, push it ahead
+      // If coin scrolled above camera, push it ahead
       if (this.coin && (this.coin.y < this.cameras.main.scrollY - 200)) {
         this.advanceCoin();
       }
 
-      // AUDIO: ramp music tempo with fall speed (eased + smoothed)
+      // Smoothly ramp music tempo with fall speed
       if (this.music && this.music.isPlaying) {
         const t = Phaser.Math.Clamp((this.fallSpeed - FALL_MIN)/(FALL_MAX - FALL_MIN), 0, 1);
         const eased = Phaser.Math.Easing.Quadratic.Out(t);
@@ -648,40 +602,48 @@
       this.physics.world.setBounds(0, 0, gameSize.width, WORLD_H);
       this.cam.setBounds(0, 0, gameSize.width, WORLD_H);
 
+      // Rails and walls resize
       this.leftRail.setPosition(this.WALL_X.left,  WORLD_H/2).setDisplaySize(WALL_DISP_W, WORLD_H).refreshBody();
       this.rightRail.setPosition(this.WALL_X.right, WORLD_H/2).setDisplaySize(WALL_DISP_W, WORLD_H).refreshBody();
 
       this.leftWallVis.setPosition(this.WALL_X.left, WORLD_H/2).setSize(WALL_DISP_W, WORLD_H).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
       this.rightWallVis.setPosition(this.WALL_X.right, WORLD_H/2).setSize(WALL_DISP_W, WORLD_H).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
 
-      // Reposition gradient strips to hug inner edges
+      // Reposition gradient strips to hug inner edges, keep consistent DPI
       const leftInner  = this.innerEdgeX('left');
       const rightInner = this.innerEdgeX('right');
-      this.leftGrad.setPosition(Math.round(leftInner + GRAD_DISP_W/2), WORLD_H/2).setSize(GRAD_DISP_W, WORLD_H);
-      this.rightGrad.setPosition(Math.round(rightInner - GRAD_DISP_W/2), WORLD_H/2).setSize(GRAD_DISP_W, WORLD_H);
+      this.leftGrad.setPosition(Math.round(leftInner + GRAD_DISP_W/2), WORLD_H/2).setSize(GRAD_DISP_W, WORLD_H).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
+      this.rightGrad.setPosition(Math.round(rightInner - GRAD_DISP_W/2), WORLD_H/2).setSize(GRAD_DISP_W, WORLD_H).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
 
+      // Keep player snapped if on wall
       if (this.onWall) this.snapToWall(this.side, null, { stationary: !this.playing });
 
-      if (this.coin) this.coin.x = Math.round((this.WALL_X.left + this.WALL_X.right)/2);
-
+      // HUD
       this.scoreText.setPosition(this.W/2, 50);
       this.subText.setPosition(this.W/2, this.H - 34);
+
+      // Keep coin centered
+      if (this.coin) this.coin.x = Math.round((this.WALL_X.left + this.WALL_X.right)/2);
     }
   }
 
+  // -------------- Phaser Game Config (pixel-perfect) --------------
   const game = new Phaser.Game({
     type: Phaser.AUTO,
     parent: 'game-root',
-    backgroundColor: '#ffff00', // TEST: yellow
+    backgroundColor: TEST_BG ? '#ffff00' : '#101317',
     physics: { default: 'arcade', arcade:{ gravity:{y:0}, debug:false } },
     scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH },
     render: {
-      pixelArt: true, antialias: false, roundPixels: true,
-      resolution: Math.max(1, Math.min(window.devicePixelRatio || 1, 2))
+      pixelArt: true,   // crisp sampling
+      antialias: false, // no smoothing
+      roundPixels: true,
+      resolution: 1     // consistent 1:1 grid on all DPI
     },
     scene: [Main]
   });
 
+  // Kick resize events when container size changes
   const stageEl = document.querySelector('.stage');
   new ResizeObserver(() => { window.dispatchEvent(new Event('resize')); }).observe(stageEl);
 })();
