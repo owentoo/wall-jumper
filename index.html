@@ -8,7 +8,7 @@
     :root { color-scheme: dark; }
     html, body {
       margin: 0; padding: 0; height: 100%;
-      background: #101317; color: #fff;
+      background: #000; color: #fff;
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
       overflow: hidden;
     }
@@ -27,7 +27,6 @@
 <script>
 (() => {
   // -------- Tunables --------
-  const TEST_BG       = false; // set true for yellow test background
   const WORLD_H       = 100000;
   const FALL_MIN      = 300, FALL_MAX = 520, FALL_ACCEL = 6.0;
   const PUSH_V        = 980;
@@ -103,7 +102,8 @@
       // World & camera
       this.physics.world.setBounds(0,0,this.W,WORLD_H);
       this.cam=this.cameras.main; this.cam.setBounds(0,0,this.W,WORLD_H);
-      this.cam.setBackgroundColor(TEST_BG?'#ffff00':'#101317'); this.cam.setRoundPixels(true);
+      this.cam.setBackgroundColor('#000000'); // pure black everywhere by default
+      this.cam.setRoundPixels(true);
 
       // Walls (visual)
       const wallKey=this.textures.exists('wallTile')?'wallTile':'wall_fallback';
@@ -119,10 +119,18 @@
       this.leftRail.setDisplaySize(WALL_DISP_W,WORLD_H).refreshBody();
       this.rightRail.setDisplaySize(WALL_DISP_W,WORLD_H).refreshBody();
 
-      // Gradient strips — MIRRORED INWARD:
-      // Left = flipped, Right = normal. Both tile at PIXEL_SCALE.
-      const leftInner  = this.innerEdgeX('left');
-      const rightInner = this.innerEdgeX('right');
+      // Mid-area background (#130620) between inner edges, behind walls/gradients
+      const leftInner0  = this.innerEdgeX('left');
+      const rightInner0 = this.innerEdgeX('right');
+      const midWidth0   = Math.max(1, rightInner0 - leftInner0);
+      this.midBg = this.add.rectangle(
+        Math.round((leftInner0 + rightInner0)/2), WORLD_H/2,
+        midWidth0, WORLD_H, 0x130620, 1
+      ).setOrigin(0.5).setDepth(-1); // behind walls/gradients
+
+      // Gradient strips — MIRRORED INWARD (left flipped, right normal)
+      const leftInner  = leftInner0;
+      const rightInner = rightInner0;
 
       this.leftGrad = this.add.tileSprite(
         leftInner + Math.round(GRAD_DISP_W/2), WORLD_H/2, GRAD_DISP_W, WORLD_H, 'wallGrad'
@@ -135,7 +143,7 @@
       // Player
       this.startY=Math.min(700,Math.max(420,this.H*0.75));
       this.player=this.physics.add.sprite(this.W/2,this.startY,'ninja',0).setDepth(2).setScale(PIXEL_SCALE);
-      this.player.body.setSize(20,30,true); // tighter body
+      this.player.body.setSize(20,30,true);
       this.player.body.setOffset((NINJA_FRAME_W-20)/2,(NINJA_FRAME_H-30)/2);
 
       // State
@@ -148,9 +156,9 @@
       this.cam.startFollow(this.player,true,1,1);
 
       // HUD
-      this.scoreText=this.add.text(this.W/2,50,'0',{fontSize:'48px',fontStyle:'800',color:TEST_BG?'#000':'#fff'})
+      this.scoreText=this.add.text(this.W/2,50,'0',{fontSize:'48px',fontStyle:'800',color:'#fff'})
         .setOrigin(0.5).setScrollFactor(0).setDepth(10);
-      this.subText=this.add.text(this.W/2,this.H-34,'Tap to start',{fontSize:'16px',color:TEST_BG?'#333':'#9aa3b2'})
+      this.subText=this.add.text(this.W/2,this.H-34,'Tap to start',{fontSize:'16px',color:'#9aa3b2'})
         .setOrigin(0.5).setScrollFactor(0).setDepth(10);
 
       // Obstacles
@@ -197,14 +205,12 @@
         const which=(rail===this.leftRail)?'left':'right';
         if(!this.onWall){
           this.onWall=true; this.side=which;
-          // Hard snap to inner edge (pixel-aligned)
           this.snapToWall(which, null, {stationary:false});
           this.score+=1; this.scoreText.setText(this.score);
           this.player.anims.play('land',true);
           this.landSfx.play();
           this.time.delayedCall(80,()=>{ if(this.onWall&&this.alive) this.playSlide(); });
         } else {
-          // keep x locked
           this.snapToWall(which, null, {stationary:false});
         }
       };
@@ -266,8 +272,8 @@
 
       this.overlayStart=this.add.container(0,0).setScrollFactor(0).setDepth(1000);
       const dim=this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({useHandCursor:true});
-      const title=this.add.text(this.W/2,this.H*0.30,'WALL JUMPER',{fontSize:'40px',fontStyle:'800',color:TEST_BG?'#000':'#ffffff'}).setOrigin(0.5);
-      const instr=this.add.text(this.W/2,this.H*0.40,'Tap anywhere to start\nScore on each wall touch\nAvoid the hazards',{fontSize:'18px',color:TEST_BG?'#333':'#b7c0cf',align:'center'}).setOrigin(0.5);
+      const title=this.add.text(this.W/2,this.H*0.30,'WALL JUMPER',{fontSize:'40px',fontStyle:'800',color:'#ffffff'}).setOrigin(0.5);
+      const instr=this.add.text(this.W/2,this.H*0.40,'Tap anywhere to start\nScore on each wall touch\nAvoid the hazards',{fontSize:'18px',color:'#b7c0cf',align:'center'}).setOrigin(0.5);
       const musicToggle=this.makeToggleButton({x:this.W/2-95,y:this.H*0.55,label:'Music',getOn:()=>!this.musicMuted,onToggle:()=>{this.musicMuted=!this.musicMuted;}});
       const sfxToggle  =this.makeToggleButton({x:this.W/2+95,y:this.H*0.55,label:'SFX',getOn:()=>!this.sfxMuted,onToggle:()=>{this.sfxMuted=!this.sfxMuted;}});
       this.overlayStart.add([dim,title,instr,musicToggle.group,sfxToggle.group]);
@@ -284,9 +290,9 @@
       this.playing=false; this.spawnTimer.paused=true; if(this.music&&this.music.isPlaying) this.music.stop();
       this.overlayGameOver=this.add.container(0,0).setScrollFactor(0).setDepth(1000);
       const dim=this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({useHandCursor:true});
-      const title=this.add.text(this.W/2,this.H*0.32,'GAME OVER',{fontSize:'40px',fontStyle:'800',color:TEST_BG?'#000':'#ffffff'}).setOrigin(0.5);
-      const stats=this.add.text(this.W/2,this.H*0.42,`Score ${this.score} • Best ${this.best}`,{fontSize:'18px',color:TEST_BG?'#333':'#b7c0cf'}).setOrigin(0.5);
-      const tip=this.add.text(this.W/2,this.H*0.47,'Tap anywhere to restart',{fontSize:'16px',color:TEST_BG?'#333':'#9aa3b2'}).setOrigin(0.5);
+      const title=this.add.text(this.W/2,this.H*0.32,'GAME OVER',{fontSize:'40px',fontStyle:'800',color:'#ffffff'}).setOrigin(0.5);
+      const stats=this.add.text(this.W/2,this.H*0.42,`Score ${this.score} • Best ${this.best}`,{fontSize:'18px',color:'#b7c0cf'}).setOrigin(0.5);
+      const tip=this.add.text(this.W/2,this.H*0.47,'Tap anywhere to restart',{fontSize:'16px',color:'#9aa3b2'}).setOrigin(0.5);
       this.overlayGameOver.add([dim,title,stats,tip]);
       this.input.once('pointerdown',()=>this.restart(),this);
     }
@@ -384,7 +390,7 @@
 
       if(this.coinAudio){ try{ this.coinAudio.currentTime=0; this.coinAudio.play(); }catch(e){} }
 
-      const pop=this.add.text(this.coin.x,this.coin.y-10,'+5',{fontSize:'16px',color:TEST_BG?'#000':'#ffd54a'}).setDepth(5).setOrigin(0.5);
+      const pop=this.add.text(this.coin.x,this.coin.y-10,'+5',{fontSize:'16px',color:'#ffd54a'}).setDepth(5).setOrigin(0.5);
       this.tweens.add({targets:pop,y:pop.y-24,alpha:0,duration:420,ease:'Quad.Out',onComplete:()=>pop.destroy()});
 
       this.coin.setActive(false).setVisible(false);
@@ -450,15 +456,19 @@
       this.leftWallVis.setPosition(this.WALL_X.left,WORLD_H/2).setSize(WALL_DISP_W,WORLD_H).setTileScale(PIXEL_SCALE,PIXEL_SCALE);
       this.rightWallVis.setPosition(this.WALL_X.right,WORLD_H/2).setSize(WALL_DISP_W,WORLD_H).setTileScale(PIXEL_SCALE,PIXEL_SCALE);
 
+      // Update mid strip (#130620) to exactly fill between inner edges
+      const li=this.innerEdgeX('left'), ri=this.innerEdgeX('right');
+      const mw=Math.max(1, ri - li);
+      this.midBg.setPosition(Math.round((li+ri)/2), WORLD_H/2).setSize(mw, WORLD_H);
+
       // Gradients (mirror inward)
-      const leftInner=this.innerEdgeX('left'), rightInner=this.innerEdgeX('right');
       this.leftGrad
-        .setPosition(leftInner + Math.round(GRAD_DISP_W/2), WORLD_H/2)
+        .setPosition(li + Math.round(GRAD_DISP_W/2), WORLD_H/2)
         .setSize(GRAD_DISP_W, WORLD_H)
         .setTileScale(PIXEL_SCALE,PIXEL_SCALE)
         .setFlipX(true);
       this.rightGrad
-        .setPosition(rightInner - Math.round(GRAD_DISP_W/2), WORLD_H/2)
+        .setPosition(ri - Math.round(GRAD_DISP_W/2), WORLD_H/2)
         .setSize(GRAD_DISP_W, WORLD_H)
         .setTileScale(PIXEL_SCALE,PIXEL_SCALE)
         .setFlipX(false);
@@ -473,11 +483,11 @@
     }
   }
 
-  // Phaser config: pixel-perfect, no AA
+  // Phaser config: pixel-perfect, no AA, black everywhere
   const game=new Phaser.Game({
     type: Phaser.AUTO,
     parent: 'game-root',
-    backgroundColor: TEST_BG?'#ffff00':'#101317',
+    backgroundColor: '#000000',
     physics: { default:'arcade', arcade:{ gravity:{y:0}, debug:false } },
     scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH },
     render: { pixelArt:true, antialias:false, roundPixels:true, resolution:1 },
