@@ -8,7 +8,8 @@
     :root { color-scheme: dark; }
     html, body {
       margin: 0; padding: 0; height: 100%;
-      background: #101317; color: #fff;
+      background: #ffff00; /* TEST: yellow */
+      color: #000;
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
       overflow: hidden;
     }
@@ -92,6 +93,11 @@
   const WALL_SRC_W    = 26;
   const WALL_DISP_W   = WALL_SRC_W * PIXEL_SCALE;
 
+  // Gradient strip (exact pixels; do NOT scale to keep requested 54×104 look)
+  const GRAD_SRC_W    = 54;  // image width
+  const GRAD_SRC_H    = 104; // image tile height (for repeat)
+  const GRAD_DISP_W   = GRAD_SRC_W; // keep 1:1 to the asset
+
   // Spikes (24x12 source → display scaled by PIXEL_SCALE)
   const OB_SRC_W = 24, OB_SRC_H = 12;
   const OB_DISP_W = OB_SRC_W * PIXEL_SCALE, OB_DISP_H = OB_SRC_H * PIXEL_SCALE;
@@ -114,10 +120,19 @@
       return { left, right };
     }
 
+    // Helper: inner edge X of a wall
+    innerEdgeX(which){
+      const rail = (which === 'left') ? this.leftRail : this.rightRail;
+      return rail.x + ((which === 'left') ? rail.body.halfWidth : -rail.body.halfWidth);
+    }
+
     preload(){
       this.load.spritesheet('ninja', 'ninja_sheet.png', { frameWidth: 24, frameHeight: 34 });
       this.load.image('wallTile', 'wall.png');
       this.load.image('obstacle', 'spike.png');
+
+      // Gradient strips
+      this.load.image('wallGrad', 'gradiant.png'); // 54×104, repeats vertically
 
       // Coin (16x16, 4 frames)
       this.load.spritesheet('coin', 'coin.png', { frameWidth: 16, frameHeight: 16 });
@@ -162,6 +177,19 @@
       this.leftRail.setDisplaySize(WALL_DISP_W, WORLD_H).refreshBody();
       this.rightRail.setDisplaySize(WALL_DISP_W, WORLD_H).refreshBody();
 
+      // --- NEW: Gradient strips (inside edges, behind ninja/spikes) ---
+      // Position: immediately inside each wall, width = 54px, covers full world height
+      const leftInner  = this.innerEdgeX('left');
+      const rightInner = this.innerEdgeX('right');
+
+      this.leftGrad = this.add.tileSprite(
+        Math.round(leftInner + GRAD_DISP_W/2), WORLD_H/2, GRAD_DISP_W, WORLD_H, 'wallGrad'
+      ).setOrigin(0.5, 0.5).setDepth(0).setTileScale(1, 1); // depth 0 keeps it behind spikes(1) & ninja(2)
+
+      this.rightGrad = this.add.tileSprite(
+        Math.round(rightInner - GRAD_DISP_W/2), WORLD_H/2, GRAD_DISP_W, WORLD_H, 'wallGrad'
+      ).setOrigin(0.5, 0.5).setDepth(0).setFlipX(true).setTileScale(1, 1);
+
       // Player
       this.startY = Math.min(700, Math.max(420, this.H * 0.75));
       this.player = this.physics.add.sprite(this.W/2, this.startY, 'ninja', 0).setDepth(2);
@@ -183,13 +211,13 @@
       this.cam = this.cameras.main;
       this.cam.setBounds(0,0,this.W,WORLD_H);
       this.cam.startFollow(this.player, true, 1, 1);
-      this.cam.setBackgroundColor('#101317');
+      this.cam.setBackgroundColor('#ffff00'); // TEST: yellow
       this.cam.setRoundPixels(true);
 
       // HUD
-      this.scoreText = this.add.text(this.W/2, 50, '0', {fontSize:'48px', fontStyle:'800', color:'#fff'})
+      this.scoreText = this.add.text(this.W/2, 50, '0', {fontSize:'48px', fontStyle:'800', color:'#000'})
         .setOrigin(0.5).setScrollFactor(0).setDepth(10);
-      this.subText   = this.add.text(this.W/2, this.H-34, 'Tap to start', {fontSize:'16px', color:'#9aa3b2'})
+      this.subText   = this.add.text(this.W/2, this.H-34, 'Tap to start', {fontSize:'16px', color:'#333'})
         .setOrigin(0.5).setScrollFactor(0).setDepth(10);
 
       // Obstacles
@@ -250,7 +278,6 @@
         if (this.music)   this.music.setVolume(musicVol);
         if (this.jumpSfx) this.jumpSfx.setVolume(sfxVol);
         if (this.landSfx) this.landSfx.setVolume(sfxVol);
-        // NEW (coin audio): reflect mute/volume
         if (this.coinAudio) {
           this.coinAudio.muted = this.sfxMuted;
           this.coinAudio.volume = sfxVol;
@@ -309,20 +336,13 @@
       this.game.events.on(Phaser.Core.Events.FOCUS, () => { if (this.playing && this.music && this.music.isPaused) this.music.resume(); });
     }
 
-    // --- Wall geometry helpers ---
-    innerEdgeX(which){
-      const rail = (which === 'left') ? this.leftRail : this.rightRail;
-      return rail.x + ((which === 'left') ? rail.body.halfWidth : -rail.body.halfWidth);
-    }
-    playerHalfWidth(){ return this.player?.body ? this.player.body.halfWidth : (this.player.displayWidth * 0.5); }
-
     // Add stationary control to prevent pre-start drift
     snapToWall(which, yOverride = null, { stationary = false } = {}){
       this.onWall = true;
       this.side = which;
 
       const edge  = this.innerEdgeX(which);
-      const pHalf = this.playerHalfWidth();
+      const pHalf = this.player?.body ? this.player.body.halfWidth : (this.player.displayWidth * 0.5);
       let x = (which === 'left') ? (edge + pHalf) : (edge - pHalf);
       x = Math.round(x);
 
@@ -373,8 +393,8 @@
 
       this.overlayStart = this.add.container(0,0).setScrollFactor(0).setDepth(1000);
       const dim = this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({ useHandCursor:true });
-      const title = this.add.text(this.W/2, this.H*0.30, 'WALL JUMPER', {fontSize:'40px', fontStyle:'800', color:'#ffffff'}).setOrigin(0.5);
-      const instr = this.add.text(this.W/2, this.H*0.40, 'Tap anywhere to start\nScore on each wall touch\nAvoid the hazards', {fontSize:'18px', color:'#b7c0cf', align:'center'}).setOrigin(0.5);
+      const title = this.add.text(this.W/2, this.H*0.30, 'WALL JUMPER', {fontSize:'40px', fontStyle:'800', color:'#000000'}).setOrigin(0.5);
+      const instr = this.add.text(this.W/2, this.H*0.40, 'Tap anywhere to start\nScore on each wall touch\nAvoid the hazards', {fontSize:'18px', color:'#333333', align:'center'}).setOrigin(0.5);
 
       const musicToggle = this.makeToggleButton({
         x: this.W/2 - 95, y: this.H*0.55,
@@ -411,9 +431,9 @@
 
       this.overlayGameOver = this.add.container(0,0).setScrollFactor(0).setDepth(1000);
       const dim = this.add.rectangle(this.W/2,this.H/2,this.W,this.H,0x000000,0.45).setInteractive({ useHandCursor:true });
-      const title = this.add.text(this.W/2, this.H*0.32, 'GAME OVER', {fontSize:'40px', fontStyle:'800', color:'#ffffff'}).setOrigin(0.5);
-      const stats = this.add.text(this.W/2, this.H*0.42, `Score ${this.score} • Best ${this.best}`, {fontSize:'18px', color:'#b7c0cf'}).setOrigin(0.5);
-      const tip = this.add.text(this.W/2, this.H*0.47, 'Tap anywhere to restart', {fontSize:'16px', color:'#9aa3b2'}).setOrigin(0.5);
+      const title = this.add.text(this.W/2, this.H*0.32, 'GAME OVER', {fontSize:'40px', fontStyle:'800', color:'#000000'}).setOrigin(0.5);
+      const stats = this.add.text(this.W/2, this.H*0.42, `Score ${this.score} • Best ${this.best}`, {fontSize:'18px', color:'#333333'}).setOrigin(0.5);
+      const tip = this.add.text(this.W/2, this.H*0.47, 'Tap anywhere to restart', {fontSize:'16px', color:'#333333'}).setOrigin(0.5);
       this.overlayGameOver.add([dim,title,stats,tip]);
 
       this.input.once('pointerdown', () => this.restart(), this);
@@ -543,7 +563,7 @@
       }
 
       // Little pop & +5 text
-      const pop = this.add.text(this.coin.x, this.coin.y - 10, '+5', { fontSize:'16px', color:'#ffd54a' }).setDepth(5);
+      const pop = this.add.text(this.coin.x, this.coin.y - 10, '+5', { fontSize:'16px', color:'#000' }).setDepth(5);
       pop.setScale(1).setOrigin(0.5);
       this.tweens.add({
         targets: pop,
@@ -634,6 +654,12 @@
       this.leftWallVis.setPosition(this.WALL_X.left, WORLD_H/2).setSize(WALL_DISP_W, WORLD_H).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
       this.rightWallVis.setPosition(this.WALL_X.right, WORLD_H/2).setSize(WALL_DISP_W, WORLD_H).setTileScale(PIXEL_SCALE, PIXEL_SCALE);
 
+      // Reposition gradient strips to hug inner edges
+      const leftInner  = this.innerEdgeX('left');
+      const rightInner = this.innerEdgeX('right');
+      this.leftGrad.setPosition(Math.round(leftInner + GRAD_DISP_W/2), WORLD_H/2).setSize(GRAD_DISP_W, WORLD_H);
+      this.rightGrad.setPosition(Math.round(rightInner - GRAD_DISP_W/2), WORLD_H/2).setSize(GRAD_DISP_W, WORLD_H);
+
       if (this.onWall) this.snapToWall(this.side, null, { stationary: !this.playing });
 
       if (this.coin) this.coin.x = Math.round((this.WALL_X.left + this.WALL_X.right)/2);
@@ -646,7 +672,7 @@
   const game = new Phaser.Game({
     type: Phaser.AUTO,
     parent: 'game-root',
-    backgroundColor: '#101317',
+    backgroundColor: '#ffff00', // TEST: yellow
     physics: { default: 'arcade', arcade:{ gravity:{y:0}, debug:false } },
     scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH },
     render: {
